@@ -35,7 +35,7 @@ export const Header: React.FC<HeaderProps> = ({
       <div className="pointer-events-auto flex items-center gap-3 bg-slate-900/90 backdrop-blur-md border border-slate-700/80 px-4 py-2.5 rounded-2xl shadow-xl">
         <div className="relative">
           <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/50 flex items-center justify-center text-2xl shadow-inner">
-            🐻
+            🐶
           </div>
           <span className="absolute -bottom-1 -right-1 flex h-3 w-3">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
@@ -47,9 +47,9 @@ export const Header: React.FC<HeaderProps> = ({
             即刻救熊：大眾運輸救援
           </h1>
           <p className="text-[11px] text-slate-400 font-medium flex items-center gap-1.5">
-            <span className="text-emerald-400 font-semibold">● 任務進行中</span>
+            <span className="text-emerald-400 font-semibold">● 柴犬隊長出勤中</span>
             <span>|</span>
-            <span>健保即時連線 {lastUpdated || '已同步'}</span>
+            <span>健保即時 {lastUpdated || '已同步'}</span>
           </p>
         </div>
       </div>

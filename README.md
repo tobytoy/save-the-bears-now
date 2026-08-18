@@ -1,5 +1,7 @@
 # 🐻 即刻救熊：大眾運輸救援大作戰 (Save the Bears Now!)
 
+[即刻遊玩](https://tobytoy.github.io/save-the-bears-now/)
+
 > 一款結合「可愛純向量手繪風格、真實大眾交通路網、衛福部健保署急診即時開放資料與真實生活突發應急模擬」的互動救援網頁遊戲。
 
 ![GitHub Actions Status](https://img.shields.io/badge/deploy-GitHub%20Pages-success?style=flat-square)

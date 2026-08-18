@@ -1,9 +1,10 @@
-import React, { useMemo } from 'react';
-import { Navigation, Heart, Zap } from 'lucide-react';
+import React, { useMemo, useRef } from 'react';
+import { Navigation, Heart, Zap, ChevronLeft, ChevronRight, Compass } from 'lucide-react';
 import { Player, Bear, Hospital, TransitNetwork, TransitMode } from '../../types';
 import { calculateDistanceKm, formatDistance, estimateTravelTimeSec } from '../../utils/geo';
 import { VehicleIcon } from '../Assets/VehicleIcons';
 import { BearIllustration } from '../Assets/BearIllustrations';
+import { ShibaMedic } from '../Assets/PlayerIllustration';
 
 interface RescueHUDProps {
   player: Player;
@@ -24,6 +25,8 @@ export const RescueHUD: React.FC<RescueHUDProps> = ({
   onPickupBear,
   onDeliverBear
 }) => {
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
   // Check if player is near any unrescued bear (< 0.8 km)
   const nearbyBear = useMemo(() => {
     if (player.carryingBear) return null;
@@ -33,6 +36,27 @@ export const RescueHUD: React.FC<RescueHUDProps> = ({
       ) || null
     );
   }, [player, activeBears]);
+
+  // Nearest bear for fast route navigation
+  const closestBear = useMemo(() => {
+    if (activeBears.length === 0) return null;
+    return [...activeBears].sort(
+      (a, b) =>
+        calculateDistanceKm(player.lat, player.lng, a.lat, a.lng) -
+        calculateDistanceKm(player.lat, player.lng, b.lat, b.lng)
+    )[0];
+  }, [player, activeBears]);
+
+  // Nearest optimal hospital (< 5 beds wait & not full)
+  const bestHospital = useMemo(() => {
+    const validHospitals = hospitals.filter((h) => h.inform === 'N');
+    const targetPool = validHospitals.length > 0 ? validHospitals : hospitals;
+    return [...targetPool].sort(
+      (a, b) =>
+        calculateDistanceKm(player.lat, player.lng, a.lat, a.lng) -
+        calculateDistanceKm(player.lat, player.lng, b.lat, b.lng)
+    )[0] || null;
+  }, [player, hospitals]);
 
   // Check if player carrying bear is near any hospital (< 0.8 km)
   const nearbyHospital = useMemo(() => {
@@ -44,7 +68,7 @@ export const RescueHUD: React.FC<RescueHUDProps> = ({
     );
   }, [player, hospitals]);
 
-  // Find nearest transit options around player
+  // Find nearby transit options around player
   const transitOptions = useMemo(() => {
     if (!transitNetwork) return [];
     const options: {
@@ -129,22 +153,45 @@ export const RescueHUD: React.FC<RescueHUDProps> = ({
       }
     });
 
-    // Sort by distance and limit to closest 8 options
-    return options.sort((a, b) => a.distKm - b.distKm).slice(0, 8);
+    return options.sort((a, b) => a.distKm - b.distKm);
   }, [player, transitNetwork]);
 
+  // Scroll Helpers
+  const scrollLeft = () => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollBy({ left: -260, behavior: 'smooth' });
+    }
+  };
+
+  const scrollRight = () => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollBy({ left: 260, behavior: 'smooth' });
+    }
+  };
+
+  // Fast Navigation to Bear or Hospital
+  const handleFastRoute = () => {
+    if (player.carryingBear && bestHospital) {
+      // Route to best hospital
+      onMove(bestHospital.lat, bestHospital.lng, `${bestHospital.name} 急診門口`, 'METRO');
+    } else if (closestBear) {
+      // Route to closest bear
+      onMove(closestBear.lat, closestBear.lng, `${closestBear.locationName}`, 'BIKE');
+    }
+  };
+
   return (
-    <div className="absolute bottom-4 left-3 right-3 z-[1000] flex flex-col items-center gap-2 pointer-events-none">
-      {/* Dynamic Interaction Card (Rescue or Deliver Alert) */}
+    <div className="absolute bottom-3 left-2 right-2 sm:left-4 sm:right-4 z-[1000] flex flex-col items-center gap-2 pointer-events-none">
+      {/* Dynamic Action Trigger Banner (Rescue Bear / Deliver to ER) */}
       {nearbyBear && (
-        <div className="pointer-events-auto w-full max-w-md bg-gradient-to-r from-amber-900/95 to-orange-950/95 border-2 border-amber-400 backdrop-blur-xl p-3.5 rounded-2xl shadow-2xl animate-bounce-subtle flex items-center justify-between gap-3">
+        <div className="pointer-events-auto w-full max-w-lg bg-gradient-to-r from-amber-950/95 via-slate-900 to-orange-950/95 border-2 border-amber-400 backdrop-blur-xl p-3.5 rounded-2xl shadow-2xl animate-bounce-subtle flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <BearIllustration type={nearbyBear.type} size={48} />
             <div>
               <div className="flex items-center gap-2">
                 <span className="font-extrabold text-sm text-amber-200">{nearbyBear.name}</span>
-                <span className="text-[10px] bg-amber-500/30 text-amber-200 px-2 py-0.5 rounded-full font-bold">
-                  需急救
+                <span className="text-[10px] bg-rose-500/30 text-rose-200 border border-rose-500/50 px-2 py-0.5 rounded-full font-bold">
+                  需火速送醫 (HP: {Math.round(nearbyBear.currentHealth)}%)
                 </span>
               </div>
               <p className="text-xs text-amber-100/90 font-medium line-clamp-1">{nearbyBear.story}</p>
@@ -156,13 +203,13 @@ export const RescueHUD: React.FC<RescueHUDProps> = ({
             className="flex-shrink-0 bg-gradient-to-r from-amber-400 to-orange-500 hover:from-amber-300 hover:to-orange-400 text-slate-950 font-black px-4 py-2.5 rounded-xl text-xs shadow-lg transition-transform active:scale-95 flex items-center gap-1.5"
           >
             <Heart className="w-4 h-4 fill-slate-950" />
-            <span>抱起救援</span>
+            <span>抱起救援 (Space)</span>
           </button>
         </div>
       )}
 
       {nearbyHospital && (
-        <div className="pointer-events-auto w-full max-w-md bg-gradient-to-r from-emerald-950/95 to-teal-950/95 border-2 border-emerald-400 backdrop-blur-xl p-3.5 rounded-2xl shadow-2xl animate-pulse-slow flex items-center justify-between gap-3">
+        <div className="pointer-events-auto w-full max-w-lg bg-gradient-to-r from-emerald-950/95 via-slate-900 to-teal-950/95 border-2 border-emerald-400 backdrop-blur-xl p-3.5 rounded-2xl shadow-2xl animate-pulse-slow flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="w-11 h-11 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-2xl">
               🏥
@@ -181,7 +228,7 @@ export const RescueHUD: React.FC<RescueHUDProps> = ({
                 )}
               </div>
               <p className="text-xs text-emerald-100/80 font-medium">
-                急診待床: {nearbyHospital.waitBed ?? 0} 人 | 等待看診: {nearbyHospital.waitSee ?? 0} 人
+                急診待床: {nearbyHospital.waitBed ?? 0} 人 | 等看診: {nearbyHospital.waitSee ?? 0} 人
               </p>
             </div>
           </div>
@@ -191,34 +238,36 @@ export const RescueHUD: React.FC<RescueHUDProps> = ({
             className="flex-shrink-0 bg-gradient-to-r from-emerald-400 to-teal-400 hover:from-emerald-300 hover:to-teal-300 text-slate-950 font-black px-4 py-2.5 rounded-xl text-xs shadow-lg transition-transform active:scale-95 flex items-center gap-1.5"
           >
             <Zap className="w-4 h-4 fill-slate-950" />
-            <span>送入急診</span>
+            <span>送入急診 (Space)</span>
           </button>
         </div>
       )}
 
-      {/* Main Control Console */}
-      <div className="pointer-events-auto w-full max-w-4xl bg-slate-900/95 backdrop-blur-2xl border border-slate-700/80 rounded-3xl p-3.5 shadow-2xl text-slate-100 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
-        {/* Left: Player Status & Carried Bear */}
-        <div className="flex items-center gap-3 min-w-[240px]">
+      {/* Main Control Console Card */}
+      <div className="pointer-events-auto w-full max-w-5xl bg-slate-900/95 backdrop-blur-2xl border border-slate-700/80 rounded-3xl p-3 shadow-2xl text-slate-100 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+        {/* Left: Player Status (🐶 柴犬隊長) & Carried Bear */}
+        <div className="flex items-center gap-3 min-w-[260px]">
           <div className="relative flex-shrink-0">
-            <div className="w-12 h-12 rounded-2xl bg-slate-800 border border-slate-600 flex items-center justify-center shadow-inner">
-              <VehicleIcon mode={player.currentMode} size={28} />
+            <div className="w-12 h-12 rounded-2xl bg-amber-500/15 border border-amber-400/40 flex items-center justify-center shadow-inner">
+              <ShibaMedic size={44} />
             </div>
             {player.carryingBear && (
-              <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white rounded-full p-0.5 shadow">
-                <Heart className="w-3.5 h-3.5 fill-white" />
+              <span className="absolute -top-1 -right-1 bg-rose-500 text-white rounded-full p-1 shadow animate-bounce text-[10px]">
+                🐻
               </span>
             )}
           </div>
 
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1.5">
-              <span className="font-extrabold text-sm text-white truncate">
-                {player.currentStationName || '城市街道'}
+              <span className="font-extrabold text-sm text-amber-300">🐶 柴犬隊長</span>
+              <span className="text-slate-400">·</span>
+              <span className="text-xs text-slate-200 font-bold truncate max-w-[130px]">
+                {player.currentStationName || '台北車站'}
               </span>
               {player.isMoving && (
                 <span className="text-[10px] text-sky-300 bg-sky-500/20 px-2 py-0.5 rounded-full font-bold animate-pulse">
-                  移動中...
+                  移動中
                 </span>
               )}
             </div>
@@ -227,7 +276,7 @@ export const RescueHUD: React.FC<RescueHUDProps> = ({
             {player.carryingBear ? (
               <div className="mt-1 space-y-1">
                 <div className="flex items-center justify-between text-[11px] font-bold">
-                  <span className="text-amber-300 flex items-center gap-1">
+                  <span className="text-amber-200 flex items-center gap-1">
                     <span>護送中:</span> {player.carryingBear.name}
                   </span>
                   <span className={player.carryingBear.currentHealth < 30 ? 'text-rose-400 font-black animate-pulse' : 'text-emerald-400'}>
@@ -248,52 +297,89 @@ export const RescueHUD: React.FC<RescueHUDProps> = ({
                 </div>
               </div>
             ) : (
-              <p className="text-xs text-slate-400 font-medium">
-                {activeBears.length > 0
-                  ? `地圖上有 ${activeBears.length} 隻熊熊等待救援！請搭車前往`
-                  : '搜救雷達掃描中...'}
-              </p>
+              <div className="flex items-center gap-2 mt-0.5">
+                <p className="text-xs text-slate-400 font-medium truncate">
+                  {activeBears.length > 0
+                    ? `地圖有 ${activeBears.length} 隻熊熊待援`
+                    : '搜救雷達掃描中...'}
+                </p>
+                {closestBear && (
+                  <button
+                    onClick={handleFastRoute}
+                    disabled={player.isMoving}
+                    className="text-[10px] bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 px-2 py-0.5 rounded-md font-bold transition-transform active:scale-95 flex items-center gap-1 flex-shrink-0"
+                    title="自動前往最近受傷小熊"
+                  >
+                    <Compass className="w-3 h-3 text-amber-400" />
+                    <span>一鍵前往小熊</span>
+                  </button>
+                )}
+              </div>
             )}
           </div>
         </div>
 
-        {/* Right: Nearby Transit Boarding Selector */}
-        <div className="flex-1 min-w-0 border-t md:border-t-0 md:border-l border-slate-800 pt-2 md:pt-0 md:pl-3">
+        {/* Right: Nearby Transit Boarding Selector with Scroll Arrows & No Clipping */}
+        <div className="flex-1 min-w-0 border-t md:border-t-0 md:border-l border-slate-800 pt-2 md:pt-0 md:pl-3 relative">
           <div className="text-[11px] font-bold text-slate-400 mb-1.5 flex items-center justify-between">
             <span className="flex items-center gap-1">
               <Navigation className="w-3.5 h-3.5 text-sky-400" />
-              鄰近大眾交通站點 (點擊搭乘移動)
+              <span>鄰近大眾交通站點 (點擊即可搭乘)</span>
             </span>
-            <span className="text-[10px] text-slate-500">限乘大眾運輸/YouBike</span>
+            <span className="text-[10px] text-slate-500 hidden sm:inline">可左右滑動查看更多 ➔</span>
           </div>
 
-          <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
-            {transitOptions.length === 0 ? (
-              <div className="text-xs text-slate-500 py-1">正在搜尋周邊站點...</div>
-            ) : (
-              transitOptions.map((opt) => (
-                <button
-                  key={opt.id}
-                  disabled={player.isMoving}
-                  onClick={() => onMove(opt.lat, opt.lng, opt.name, opt.mode)}
-                  className={`flex-shrink-0 flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all duration-150 ${
-                    player.isMoving
-                      ? 'opacity-50 cursor-not-allowed bg-slate-800/40 border-slate-700 text-slate-400'
-                      : 'bg-slate-800/90 hover:bg-slate-700/90 active:scale-95 text-slate-200 border-slate-600/80 hover:border-sky-400 shadow-md'
-                  }`}
-                >
-                  <VehicleIcon mode={opt.mode} size={18} />
-                  <div className="text-left">
-                    <div className="font-bold text-slate-100 max-w-[120px] truncate">{opt.name}</div>
-                    <div className="text-[10px] text-slate-400 flex items-center gap-1">
-                      <span>{formatDistance(opt.distKm)}</span>
-                      <span>·</span>
-                      <span className="text-sky-300">約 {Math.max(1, Math.round(opt.timeSec / 60))} 分</span>
+          <div className="relative flex items-center">
+            {/* Scroll Left Button */}
+            <button
+              onClick={scrollLeft}
+              className="absolute -left-2 z-20 p-1.5 bg-slate-800/90 hover:bg-slate-700 text-slate-200 border border-slate-600 rounded-full shadow-lg transition-transform active:scale-90"
+              title="向左滾動"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" />
+            </button>
+
+            {/* Scrollable Container */}
+            <div
+              ref={scrollContainerRef}
+              className="flex items-center gap-2 overflow-x-auto px-4 py-1 scrollbar-none w-full"
+            >
+              {transitOptions.length === 0 ? (
+                <div className="text-xs text-slate-500 py-1">搜尋周邊站點中...</div>
+              ) : (
+                transitOptions.map((opt) => (
+                  <button
+                    key={opt.id}
+                    disabled={player.isMoving}
+                    onClick={() => onMove(opt.lat, opt.lng, opt.name, opt.mode)}
+                    className={`flex-shrink-0 min-w-[150px] max-w-[200px] flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all duration-150 ${
+                      player.isMoving
+                        ? 'opacity-50 cursor-not-allowed bg-slate-800/40 border-slate-700 text-slate-400'
+                        : 'bg-slate-800/90 hover:bg-slate-700/90 active:scale-95 text-slate-200 border-slate-600/80 hover:border-sky-400 shadow-md'
+                    }`}
+                  >
+                    <VehicleIcon mode={opt.mode} size={18} />
+                    <div className="text-left min-w-0 flex-1">
+                      <div className="font-bold text-slate-100 truncate">{opt.name}</div>
+                      <div className="text-[10px] text-slate-400 flex items-center gap-1">
+                        <span>{formatDistance(opt.distKm)}</span>
+                        <span>·</span>
+                        <span className="text-sky-300">約 {Math.max(1, Math.round(opt.timeSec / 60))} 分</span>
+                      </div>
                     </div>
-                  </div>
-                </button>
-              ))
-            )}
+                  </button>
+                ))
+              )}
+            </div>
+
+            {/* Scroll Right Button */}
+            <button
+              onClick={scrollRight}
+              className="absolute -right-2 z-20 p-1.5 bg-slate-800/90 hover:bg-slate-700 text-slate-200 border border-slate-600 rounded-full shadow-lg transition-transform active:scale-90"
+              title="向右滾動查看更多"
+            >
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
           </div>
         </div>
       </div>
