@@ -108,6 +108,7 @@ export function App() {
         <GameIntroModal
           onStart={startGame}
           onOpenTutorial={() => setShowTutorial(true)}
+          transitNetwork={transitNetwork}
         />
       )}
 

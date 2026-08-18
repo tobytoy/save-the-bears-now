@@ -235,8 +235,13 @@ export function useGameEngine() {
     [spawnBear]
   );
 
-  // 4. Start Game with High Randomness
-  const startGame = useCallback(() => {
+  // 4. Start Game (支援隨機開始 vs 自訂地址/地標出發)
+  const startGame = useCallback((options?: {
+    mode: 'RANDOM' | 'CUSTOM';
+    customCoord?: [number, number];
+    locationName?: string;
+    customStationName?: string;
+  }) => {
     setGameState('PLAYING');
     setStats({
       score: 0,
@@ -247,11 +252,25 @@ export function useGameEngine() {
       gameTimeSec: 0
     });
 
-    const startHub = INITIAL_PLAYER_HUBS[Math.floor(Math.random() * INITIAL_PLAYER_HUBS.length)];
+    let startLat = 25.0463;
+    let startLng = 121.5175;
+    let startName = '台北車站 (三鐵共構)';
+
+    if (options?.mode === 'CUSTOM' && options.customCoord) {
+      startLat = options.customCoord[0];
+      startLng = options.customCoord[1];
+      startName = options.locationName || options.customStationName || '自訂出發地點';
+    } else {
+      const startHub = INITIAL_PLAYER_HUBS[Math.floor(Math.random() * INITIAL_PLAYER_HUBS.length)];
+      startLat = startHub.lat;
+      startLng = startHub.lng;
+      startName = startHub.name;
+    }
+
     setPlayer({
-      lat: startHub.lat,
-      lng: startHub.lng,
-      currentStationName: startHub.name,
+      lat: startLat,
+      lng: startLng,
+      currentStationName: startName,
       currentMode: 'WALK',
       isOnTransit: false,
       boardedVehicleName: undefined,
@@ -266,9 +285,21 @@ export function useGameEngine() {
 
     setActiveBears([]);
     setTimeout(() => {
-      const shuffled = [...DIVERSE_SPAWN_LOCATIONS].sort(() => 0.5 - Math.random());
-      for (let i = 0; i < 3; i++) {
-        spawnBear([shuffled[i].lat, shuffled[i].lng], shuffled[i].name);
+      if (options?.mode === 'CUSTOM' && options.customCoord) {
+        // 在使用者指定出發點周邊 0.8km ~ 2.5km 半徑生成 3 隻待救小熊
+        const angles = [0.2, 2.3, 4.4];
+        for (let i = 0; i < 3; i++) {
+          const angle = angles[i] + (Math.random() - 0.5) * 0.5;
+          const radius = 0.008 + Math.random() * 0.012; // 約 0.9km ~ 2.2km
+          const bLat = startLat + Math.sin(angle) * radius;
+          const bLng = startLng + Math.cos(angle) * radius;
+          spawnBear([bLat, bLng], `${startName} 附近巷弄 (${i + 1}號待援點)`);
+        }
+      } else {
+        const shuffled = [...DIVERSE_SPAWN_LOCATIONS].sort(() => 0.5 - Math.random());
+        for (let i = 0; i < 3; i++) {
+          spawnBear([shuffled[i].lat, shuffled[i].lng], shuffled[i].name);
+        }
       }
     }, 400);
   }, [spawnBear]);
