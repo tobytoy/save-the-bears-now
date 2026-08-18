@@ -159,8 +159,7 @@ export function useGameEngine() {
     loadData();
   }, []);
 
-  // Periodic Refresh for Hospital Data (every 5 minutes)
-  // ⚠️ 修正：用 useRef 儲存最新 hospitals 參考，避免 hospitals 改變後 interval 被反覆重建
+  // Periodic Refresh for Hospital Data (every 30 minutes / 30 分鐘才會打一次)
   const hospitalsRef = useRef<Hospital[]>([]);
   useEffect(() => {
     hospitalsRef.current = hospitals;
@@ -173,9 +172,9 @@ export function useGameEngine() {
         setHospitals(refreshed);
         setLastUpdatedTime(new Date().toLocaleTimeString());
       }
-    }, 5 * 60 * 1000);
+    }, 30 * 60 * 1000); // 30 分鐘間隔
     return () => clearInterval(interval);
-  }, []); // ← 空依賴：interval 只建立一次，永遠準時每 5 分鐘執行
+  }, []); // ← 空依賴：interval 只建立一次，每 30 分鐘執行一次
 
   // 2. High-Randomness Spawn Bear Helper
   const spawnBear = useCallback(

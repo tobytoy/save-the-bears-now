@@ -14,10 +14,24 @@ interface NHIRecord {
 }
 
 const CACHE_KEY = 'nhi_emergency_cache_v1';
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes (30 分鐘才會打一次)
+
+async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 3500): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+    return res;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
 
 export async function fetchLiveEmergencyData(baseHospitals: Hospital[]): Promise<Hospital[]> {
-  // 1. Check local cache first
+  // 1. Check local cache first (30 分鐘有效)
   try {
     const cached = localStorage.getItem(CACHE_KEY);
     if (cached) {
@@ -30,43 +44,43 @@ export async function fetchLiveEmergencyData(baseHospitals: Hospital[]): Promise
     console.warn('Cache read error:', err);
   }
 
-  // 2. Try fetching from NHI API (Direct / CORS Proxy)
+  // 2. Try fetching from NHI API (Direct / CORS Proxy with Timeout)
   let rawData: NHIRecord[] | null = null;
   const apiUrl = 'https://info.nhi.gov.tw/api/inae4000/inae4001s01/SQL0002';
 
-  // Strategy A: Direct POST
+  // Strategy A: Direct POST with 3.5s timeout
   try {
-    const res = await fetch(apiUrl, {
+    const res = await fetchWithTimeout(apiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ AREA_NO: '', CONT_TYPE: '' })
-    });
+    }, 3500);
     if (res.ok) {
       const json = await res.json();
       if (json && json.data && Array.isArray(json.data)) {
         rawData = json.data;
       }
     }
-  } catch (e) {
-    // CORS or network failure is expected on standard browser origin
+  } catch {
+    // Expected CORS or timeout on standard browser origin
   }
 
   // Strategy B: CORS Proxy fallback if direct failed
   if (!rawData) {
     try {
       const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(apiUrl)}`;
-      const res = await fetch(proxyUrl, {
+      const res = await fetchWithTimeout(proxyUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ AREA_NO: '', CONT_TYPE: '' })
-      });
+      }, 4000);
       if (res.ok) {
         const json = await res.json();
         if (json && json.data && Array.isArray(json.data)) {
           rawData = json.data;
         }
       }
-    } catch (e) {
+    } catch {
       // Fallback to simulation
     }
   }
@@ -76,7 +90,7 @@ export async function fetchLiveEmergencyData(baseHospitals: Hospital[]): Promise
     rawData = generateSimulatedEmergency(baseHospitals);
   }
 
-  // Save to cache
+  // Save to cache with 30-minute timestamp
   try {
     localStorage.setItem(
       CACHE_KEY,

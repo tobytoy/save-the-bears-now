@@ -238,21 +238,77 @@ export function findMultiModalRoute(
     }
   });
 
-  // ─── A* Search ─────────────────────────────────────────────────────────────
+// ─── 快速二元最小堆積 (Binary Min-Heap for A* Priority Queue) ───────────────
+class MinPriorityQueue<T> {
+  private heap: { element: T; priority: number }[] = [];
+
+  push(element: T, priority: number) {
+    this.heap.push({ element, priority });
+    this.bubbleUp(this.heap.length - 1);
+  }
+
+  pop(): T | undefined {
+    if (this.heap.length === 0) return undefined;
+    const top = this.heap[0].element;
+    const bottom = this.heap.pop()!;
+    if (this.heap.length > 0) {
+      this.heap[0] = bottom;
+      this.sinkDown(0);
+    }
+    return top;
+  }
+
+  get size(): number {
+    return this.heap.length;
+  }
+
+  private bubbleUp(index: number) {
+    while (index > 0) {
+      const parentIdx = Math.floor((index - 1) / 2);
+      if (this.heap[index].priority >= this.heap[parentIdx].priority) break;
+      [this.heap[index], this.heap[parentIdx]] = [this.heap[parentIdx], this.heap[index]];
+      index = parentIdx;
+    }
+  }
+
+  private sinkDown(index: number) {
+    const length = this.heap.length;
+    while (true) {
+      let leftChildIdx = 2 * index + 1;
+      let rightChildIdx = 2 * index + 2;
+      let smallestIdx = index;
+
+      if (leftChildIdx < length && this.heap[leftChildIdx].priority < this.heap[smallestIdx].priority) {
+        smallestIdx = leftChildIdx;
+      }
+      if (rightChildIdx < length && this.heap[rightChildIdx].priority < this.heap[smallestIdx].priority) {
+        smallestIdx = rightChildIdx;
+      }
+      if (smallestIdx === index) break;
+      [this.heap[index], this.heap[smallestIdx]] = [this.heap[smallestIdx], this.heap[index]];
+      index = smallestIdx;
+    }
+  }
+}
+
+  // ─── A* Search (O(log n) Priority Queue) ──────────────────────────────────
   const gScore = new Map<string, number>();
   const fScore = new Map<string, number>();
   const cameFrom = new Map<string, { edge: GraphEdge; fromNodeId: string }>();
 
   tempNodes.forEach((_, id) => { gScore.set(id, Infinity); fScore.set(id, Infinity); });
   gScore.set(START_ID, 0);
-  fScore.set(START_ID, (directDist / SPEED_CONFIG.METRO) * 3600);
+  const startF = (directDist / SPEED_CONFIG.METRO) * 3600;
+  fScore.set(START_ID, startF);
 
-  const openSet = new Set<string>([START_ID]);
+  const openQueue = new MinPriorityQueue<string>();
+  openQueue.push(START_ID, startF);
+  const visited = new Set<string>();
 
-  while (openSet.size > 0) {
-    let current = Array.from(openSet).reduce((minId, id) =>
-      (fScore.get(id) ?? Infinity) < (fScore.get(minId) ?? Infinity) ? id : minId
-    );
+  while (openQueue.size > 0) {
+    const current = openQueue.pop()!;
+    if (visited.has(current)) continue;
+    visited.add(current);
 
     if (current === END_ID) {
       // 路徑重建
@@ -304,7 +360,6 @@ export function findMultiModalRoute(
       };
     }
 
-    openSet.delete(current);
     const currG = gScore.get(current) ?? Infinity;
     const neighbors = tempAdjList.get(current) || [];
 
@@ -318,8 +373,9 @@ export function findMultiModalRoute(
 
         const targetNode = tempNodes.get(neighborId)!;
         const h = (calculateDistanceKm(targetNode.lat, targetNode.lng, endCoord[0], endCoord[1]) / SPEED_CONFIG.METRO) * 3600;
-        fScore.set(neighborId, tentativeG + h);
-        openSet.add(neighborId);
+        const nextF = tentativeG + h;
+        fScore.set(neighborId, nextF);
+        openQueue.push(neighborId, nextF);
       }
     }
   }

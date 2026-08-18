@@ -24,8 +24,32 @@ const MapFollowController: React.FC<{ playerPos: [number, number] }> = ({ player
   return null;
 };
 
+// ─── Leaflet Icon 快取層 (避免每幀移動重新生成 HTML 字串與 DivIcon) ────────────
+const playerIconCache = new Map<string, L.DivIcon>();
+const hospitalIconCache = new Map<string, L.DivIcon>();
+const bearIconCache = new Map<string, L.DivIcon>();
+const metroIconCache = new Map<string, L.DivIcon>();
+
+const singleYouBikeIcon = L.divIcon({
+  html: `<div class="w-5 h-5 rounded-full bg-amber-400 border border-slate-900 shadow-md flex items-center justify-center text-[10px] font-black text-slate-950 cursor-pointer hover:scale-150 transition-transform -translate-x-1/2 -translate-y-1/2">🚲</div>`,
+  className: 'custom-youbike-node',
+  iconSize: [20, 20],
+  iconAnchor: [10, 10]
+});
+
+const singleBusIcon = L.divIcon({
+  html: `<div class="w-3.5 h-3.5 rounded-full bg-emerald-500 border border-white shadow hover:scale-150 transition-transform -translate-x-1/2 -translate-y-1/2"></div>`,
+  className: 'custom-bus-node',
+  iconSize: [14, 14],
+  iconAnchor: [7, 7]
+});
+
 // 1. 🐶 Player Marker: 柴犬急救隊長 (Shiba Doctor)
-function createPlayerIcon(mode: TransitMode, isOnTransit: boolean, isCarryingBear: boolean): L.DivIcon {
+function getPlayerIcon(mode: TransitMode, isOnTransit: boolean, isCarryingBear: boolean): L.DivIcon {
+  const cacheKey = `${mode}_${isOnTransit}_${isCarryingBear}`;
+  const existing = playerIconCache.get(cacheKey);
+  if (existing) return existing;
+
   const bgClass = !isOnTransit
     ? 'bg-amber-700 border-amber-300'
     : mode === 'METRO'
@@ -56,7 +80,7 @@ function createPlayerIcon(mode: TransitMode, isOnTransit: boolean, isCarryingBea
 
   const html = `
     <div class="relative flex items-center justify-center -translate-x-1/2 -translate-y-1/2">
-      <!-- Player Radar Pulse Ring (Faster when on transit) -->
+      <!-- Player Radar Pulse Ring -->
       <div class="absolute ${isOnTransit ? 'w-16 h-16 bg-sky-400/40' : 'w-12 h-12 bg-amber-400/25'} rounded-full animate-ping pointer-events-none"></div>
       
       <!-- Player Avatar Core (🐶 柴犬隊長) -->
@@ -83,16 +107,23 @@ function createPlayerIcon(mode: TransitMode, isOnTransit: boolean, isCarryingBea
     </div>
   `;
 
-  return L.divIcon({
+  const icon = L.divIcon({
     html,
     className: 'custom-player-marker',
     iconSize: [48, 48],
     iconAnchor: [24, 24]
   });
+  playerIconCache.set(cacheKey, icon);
+  return icon;
 }
 
-// 2. 🐻 Injured Bear Marker: 顯眼受傷小熊 (Very distinct from player)
-function createBearIcon(bear: Bear): L.DivIcon {
+// 2. 🐻 Injured Bear Marker: 顯眼受傷小熊
+function getBearIcon(bear: Bear): L.DivIcon {
+  const hpBracket = Math.round(bear.currentHealth / 5) * 5; // 5% 為一個快取級距
+  const cacheKey = `${bear.id}_${hpBracket}_${bear.name}_${bear.avatar}`;
+  const existing = bearIconCache.get(cacheKey);
+  if (existing) return existing;
+
   const hpRatio = bear.currentHealth / bear.maxHealth;
   const hpColor = hpRatio < 0.3 ? '#ef4444' : hpRatio < 0.6 ? '#f59e0b' : '#10b981';
 
@@ -121,18 +152,24 @@ function createBearIcon(bear: Bear): L.DivIcon {
     </div>
   `;
 
-  return L.divIcon({
+  const icon = L.divIcon({
     html,
     className: 'custom-bear-marker',
     iconSize: [48, 48],
     iconAnchor: [24, 24]
   });
+  bearIconCache.set(cacheKey, icon);
+  return icon;
 }
 
 // 3. 🏥 Hospital Marker
-function createHospitalIcon(hospital: Hospital): L.DivIcon {
-  const isFull = hospital.inform === 'Y';
+function getHospitalIcon(hospital: Hospital): L.DivIcon {
   const waitBed = hospital.waitBed ?? 0;
+  const cacheKey = `${hospital.id}_${hospital.inform}_${waitBed}`;
+  const existing = hospitalIconCache.get(cacheKey);
+  if (existing) return existing;
+
+  const isFull = hospital.inform === 'Y';
   const isGood = !isFull && waitBed <= 4;
 
   const bgClass = isFull
@@ -160,40 +197,32 @@ function createHospitalIcon(hospital: Hospital): L.DivIcon {
     </div>
   `;
 
-  return L.divIcon({
+  const icon = L.divIcon({
     html,
     className: 'custom-hospital-marker',
     iconSize: [40, 40],
     iconAnchor: [20, 20]
   });
+  hospitalIconCache.set(cacheKey, icon);
+  return icon;
 }
 
-// 4. Metro Station Icon
-function createMetroStationIcon(color: string): L.DivIcon {
+// 4. Metro Station Icon (Cached by color)
+function getMetroStationIcon(color: string): L.DivIcon {
+  const existing = metroIconCache.get(color);
+  if (existing) return existing;
+
   const html = `
     <div class="w-4 h-4 rounded-full border-2 border-white shadow-md cursor-pointer hover:scale-150 transition-transform -translate-x-1/2 -translate-y-1/2" style="background-color: ${color}"></div>
   `;
-  return L.divIcon({
+  const icon = L.divIcon({
     html,
     className: 'custom-metro-node',
     iconSize: [16, 16],
     iconAnchor: [8, 8]
   });
-}
-
-// 5. YouBike Station Icon
-function createYouBikeIcon(): L.DivIcon {
-  const html = `
-    <div class="w-5 h-5 rounded-full bg-amber-400 border border-slate-900 shadow-md flex items-center justify-center text-[10px] font-black text-slate-950 cursor-pointer hover:scale-150 transition-transform -translate-x-1/2 -translate-y-1/2">
-      🚲
-    </div>
-  `;
-  return L.divIcon({
-    html,
-    className: 'custom-youbike-node',
-    iconSize: [20, 20],
-    iconAnchor: [10, 10]
-  });
+  metroIconCache.set(color, icon);
+  return icon;
 }
 
 export const GameMap: React.FC<GameMapProps> = ({
@@ -247,7 +276,7 @@ export const GameMap: React.FC<GameMapProps> = ({
                 <Marker
                   key={st.id}
                   position={[st.lat, st.lng]}
-                  icon={createMetroStationIcon(line.color)}
+                  icon={getMetroStationIcon(line.color)}
                   eventHandlers={{
                     click: () => onMoveToStation(st.lat, st.lng, `${line.name} · ${st.name}站`, 'METRO')
                   }}
@@ -287,12 +316,7 @@ export const GameMap: React.FC<GameMapProps> = ({
                 <Marker
                   key={st.id}
                   position={[st.lat, st.lng]}
-                  icon={L.divIcon({
-                    html: `<div class="w-3.5 h-3.5 rounded-full bg-emerald-500 border border-white shadow hover:scale-150 transition-transform -translate-x-1/2 -translate-y-1/2"></div>`,
-                    className: 'custom-bus-node',
-                    iconSize: [14, 14],
-                    iconAnchor: [7, 7]
-                  })}
+                  icon={singleBusIcon}
                   eventHandlers={{
                     click: () => onMoveToStation(st.lat, st.lng, `${bus.name.split(' ')[0]} · ${st.name}`, 'BUS')
                   }}
@@ -320,7 +344,7 @@ export const GameMap: React.FC<GameMapProps> = ({
           <Marker
             key={ub.id}
             position={[ub.lat, ub.lng]}
-            icon={createYouBikeIcon()}
+            icon={singleYouBikeIcon}
             eventHandlers={{
               click: () => onMoveToStation(ub.lat, ub.lng, ub.name, 'BIKE')
             }}
@@ -374,7 +398,7 @@ export const GameMap: React.FC<GameMapProps> = ({
           <Marker
             key={hosp.id}
             position={[hosp.lat, hosp.lng]}
-            icon={createHospitalIcon(hosp)}
+            icon={getHospitalIcon(hosp)}
             eventHandlers={{
               click: () => onSelectHospital(hosp)
             }}
@@ -419,7 +443,7 @@ export const GameMap: React.FC<GameMapProps> = ({
           <Marker
             key={bear.id}
             position={[bear.lat, bear.lng]}
-            icon={createBearIcon(bear)}
+            icon={getBearIcon(bear)}
             eventHandlers={{
               click: () => onPickupBear(bear)
             }}
@@ -447,7 +471,7 @@ export const GameMap: React.FC<GameMapProps> = ({
         {/* Player Marker: 🐶 柴犬隊長 */}
         <Marker
           position={[player.lat, player.lng]}
-          icon={createPlayerIcon(player.currentMode, player.isOnTransit, Boolean(player.carryingBear))}
+          icon={getPlayerIcon(player.currentMode, player.isOnTransit, Boolean(player.carryingBear))}
           zIndexOffset={1000}
         />
       </MapContainer>
