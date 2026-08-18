@@ -113,12 +113,13 @@ function mergeEmergencyData(baseHospitals: Hospital[], nhiData: NHIRecord[]): Ho
         lastUpdated: rec.txT_DATE || new Date().toISOString()
       };
     }
-    // Default plausible values if not in list
+    // Default: 若醫院不在 NHI 清單，用 ID hash 產生穩定合理數值（不再每次 re-render 跳動）
+    const seed = hosp.id.charCodeAt(0) + hosp.id.charCodeAt(1) + hosp.id.length;
     return {
       ...hosp,
-      waitSee: Math.floor(Math.random() * 6),
-      waitBed: Math.floor(Math.random() * 4),
-      waitGeneral: Math.floor(Math.random() * 15),
+      waitSee: (seed % 5) + 1,
+      waitBed: (seed % 4),
+      waitGeneral: (seed * 7) % 12,
       waitIcu: 0,
       inform: 'N',
       lastUpdated: new Date().toISOString()

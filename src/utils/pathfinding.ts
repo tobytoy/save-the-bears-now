@@ -40,7 +40,7 @@ interface GraphEdge {
   color?: string;
   path: [number, number][];
   distanceKm: number;
-  durationSec: number; // in seconds
+  durationSec: number;
 }
 
 // Speeds in km/h
@@ -53,10 +53,24 @@ const SPEED_CONFIG: Record<TransitMode, number> = {
   THSR: 220.0
 };
 
-/**
- * 建立全台大眾運輸真實拓撲圖 (捷運路網、公車路線、轉乘步行路網)
- */
-function buildTransitGraph(network: TransitNetwork): { nodes: Map<string, GraphNode>; edges: GraphEdge[] } {
+// ─── 模組層級圖快取 ─────────────────────────────────────────────────────────
+// buildTransitGraph 的 O(n²) 換乘邊很耗 CPU，每次 WASD 導航不該重建
+// 快取直到 transitNetwork 路線數量有變動才重建
+interface GraphCache {
+  nodes: Map<string, GraphNode>;
+  edges: GraphEdge[];
+  adjList: Map<string, GraphEdge[]>;
+}
+
+let _cachedGraph: GraphCache | null = null;
+let _cachedNetworkId = '';
+
+function getOrBuildGraph(network: TransitNetwork): GraphCache {
+  const networkId = `${network.metro.length}_${network.bus.length}_${network.youbike.length}_${network.rail.length}`;
+  if (_cachedGraph && _cachedNetworkId === networkId) {
+    return _cachedGraph;
+  }
+
   const nodes = new Map<string, GraphNode>();
   const edges: GraphEdge[] = [];
 
@@ -76,7 +90,6 @@ function buildTransitGraph(network: TransitNetwork): { nodes: Map<string, GraphN
         color: line.color
       });
 
-      // 與上一站相連 (雙向軌道)
       if (idx > 0) {
         const prevSt = line.stations[idx - 1];
         const prevNodeId = `METRO_${line.id}_${prevSt.id}`;
@@ -84,32 +97,13 @@ function buildTransitGraph(network: TransitNetwork): { nodes: Map<string, GraphN
         const waypoints = generatePathWaypoints([prevSt.lat, prevSt.lng], [st.lat, st.lng], 6);
         const durationSec = Math.round((dist / SPEED_CONFIG.METRO) * 3600);
 
-        edges.push({
-          fromId: prevNodeId,
-          toId: nodeId,
-          mode: 'METRO',
-          lineName: line.name,
-          color: line.color,
-          path: waypoints,
-          distanceKm: dist,
-          durationSec
-        });
-
-        edges.push({
-          fromId: nodeId,
-          toId: prevNodeId,
-          mode: 'METRO',
-          lineName: line.name,
-          color: line.color,
-          path: [...waypoints].reverse(),
-          distanceKm: dist,
-          durationSec
-        });
+        edges.push({ fromId: prevNodeId, toId: nodeId, mode: 'METRO', lineName: line.name, color: line.color, path: waypoints, distanceKm: dist, durationSec });
+        edges.push({ fromId: nodeId, toId: prevNodeId, mode: 'METRO', lineName: line.name, color: line.color, path: [...waypoints].reverse(), distanceKm: dist, durationSec });
       }
     });
   });
 
-  // 2. 幹線公車站點與行車路線 (嚴格沿著公車停靠站序列)
+  // 2. 幹線公車站點連線
   network.bus.forEach((bus) => {
     bus.stops.forEach((st, idx) => {
       const nodeId = `BUS_${bus.id}_${st.id}`;
@@ -132,36 +126,16 @@ function buildTransitGraph(network: TransitNetwork): { nodes: Map<string, GraphN
         const waypoints = generatePathWaypoints([prevSt.lat, prevSt.lng], [st.lat, st.lng], 5);
         const durationSec = Math.round((dist / SPEED_CONFIG.BUS) * 3600);
 
-        edges.push({
-          fromId: prevNodeId,
-          toId: nodeId,
-          mode: 'BUS',
-          lineName: bus.name,
-          color: bus.color,
-          path: waypoints,
-          distanceKm: dist,
-          durationSec
-        });
-
-        edges.push({
-          fromId: nodeId,
-          toId: prevNodeId,
-          mode: 'BUS',
-          lineName: bus.name,
-          color: bus.color,
-          path: [...waypoints].reverse(),
-          distanceKm: dist,
-          durationSec
-        });
+        edges.push({ fromId: prevNodeId, toId: nodeId, mode: 'BUS', lineName: bus.name, color: bus.color, path: waypoints, distanceKm: dist, durationSec });
+        edges.push({ fromId: nodeId, toId: prevNodeId, mode: 'BUS', lineName: bus.name, color: bus.color, path: [...waypoints].reverse(), distanceKm: dist, durationSec });
       }
     });
   });
 
   // 3. YouBike 租借站點
   network.youbike.forEach((ub) => {
-    const nodeId = `UB_${ub.id}`;
-    nodes.set(nodeId, {
-      id: nodeId,
+    nodes.set(`UB_${ub.id}`, {
+      id: `UB_${ub.id}`,
       name: `YouBike ${ub.name}`,
       lat: ub.lat,
       lng: ub.lng,
@@ -171,50 +145,40 @@ function buildTransitGraph(network: TransitNetwork): { nodes: Map<string, GraphN
     });
   });
 
-  // 4. 站點之間的換乘與步行轉接邊 (Transfer Edges, < 1.0 km 步行轉乘)
+  // 4. 換乘步行邊 (Transfer Edges, < 0.6 km，同路線站點已連接，不重複)
   const nodeArray = Array.from(nodes.values());
   for (let i = 0; i < nodeArray.length; i++) {
     for (let j = i + 1; j < nodeArray.length; j++) {
       const n1 = nodeArray[i];
       const n2 = nodeArray[j];
-      if (n1.lineId && n2.lineId && n1.lineId === n2.lineId) continue; // 同路線已由軌道連接
+      if (n1.lineId && n2.lineId && n1.lineId === n2.lineId) continue;
 
       const dist = calculateDistanceKm(n1.lat, n1.lng, n2.lat, n2.lng);
       if (dist < 0.6) {
         const waypoints = generatePathWaypoints([n1.lat, n1.lng], [n2.lat, n2.lng], 4);
-        const durationSec = Math.round((dist / SPEED_CONFIG.WALK) * 3600) + 60; // 額外加 60s 換乘進出站時間
+        const durationSec = Math.round((dist / SPEED_CONFIG.WALK) * 3600) + 60; // +60s 進出站
 
-        edges.push({
-          fromId: n1.id,
-          toId: n2.id,
-          mode: 'WALK',
-          lineName: '步行轉乘',
-          color: '#94a3b8',
-          path: waypoints,
-          distanceKm: dist,
-          durationSec
-        });
-
-        edges.push({
-          fromId: n2.id,
-          toId: n1.id,
-          mode: 'WALK',
-          lineName: '步行轉乘',
-          color: '#94a3b8',
-          path: [...waypoints].reverse(),
-          distanceKm: dist,
-          durationSec
-        });
+        edges.push({ fromId: n1.id, toId: n2.id, mode: 'WALK', lineName: '步行轉乘', color: '#94a3b8', path: waypoints, distanceKm: dist, durationSec });
+        edges.push({ fromId: n2.id, toId: n1.id, mode: 'WALK', lineName: '步行轉乘', color: '#94a3b8', path: [...waypoints].reverse(), distanceKm: dist, durationSec });
       }
     }
   }
 
-  return { nodes, edges };
+  // 建立鄰接表
+  const adjList = new Map<string, GraphEdge[]>();
+  nodes.forEach((_, id) => adjList.set(id, []));
+  edges.forEach((edge) => {
+    adjList.get(edge.fromId)?.push(edge);
+  });
+
+  _cachedGraph = { nodes, edges, adjList };
+  _cachedNetworkId = networkId;
+  return _cachedGraph;
 }
 
 /**
  * Multi-Modal A* 演算法：搜尋從起點到終點的最佳大眾運輸路徑
- * (步行至最近捷運/公車站 ➔ 沿著捷運公車軌道站點移動 ➔ 轉乘 ➔ 出站抵達目的地)
+ * 利用模組層級圖快取，WASD 移動時不重建圖
  */
 export function findMultiModalRoute(
   startCoord: [number, number],
@@ -225,7 +189,7 @@ export function findMultiModalRoute(
 ): RoutePlan {
   const directDist = calculateDistanceKm(startCoord[0], startCoord[1], endCoord[0], endCoord[1]);
 
-  // 若距離極近 (< 350m)，直接步行前往最快
+  // 若距離極近 (< 350m)，直接步行前往
   if (directDist < 0.35) {
     const walkWaypoints = generatePathWaypoints(startCoord, endCoord, 12);
     const duration = Math.round((directDist / SPEED_CONFIG.WALK) * 3600);
@@ -233,125 +197,72 @@ export function findMultiModalRoute(
       totalDistanceKm: directDist,
       totalDurationSec: duration,
       summary: `步行前往 (${Math.round(directDist * 1000)}m)`,
-      segments: [
-        {
-          mode: 'WALK',
-          fromName: startName,
-          toName: endName,
-          path: walkWaypoints,
-          distanceKm: directDist,
-          durationSec: duration,
-          color: '#94a3b8'
-        }
-      ],
+      segments: [{ mode: 'WALK', fromName: startName, toName: endName, path: walkWaypoints, distanceKm: directDist, durationSec: duration, color: '#94a3b8' }],
       allWaypoints: walkWaypoints
     };
   }
 
-  const { nodes, edges } = buildTransitGraph(network);
+  const { nodes, adjList } = getOrBuildGraph(network);
 
   const START_ID = 'ORIGIN_START';
   const END_ID = 'DESTINATION_END';
 
-  nodes.set(START_ID, {
-    id: START_ID,
-    name: startName,
-    lat: startCoord[0],
-    lng: startCoord[1],
-    type: 'POINT',
-    mode: 'WALK'
-  });
+  // 動態加入起終點臨時節點（不污染快取圖）
+  const tempNodes = new Map<string, GraphNode>(nodes);
+  const tempAdjList = new Map<string, GraphEdge[]>(adjList);
 
-  nodes.set(END_ID, {
-    id: END_ID,
-    name: endName,
-    lat: endCoord[0],
-    lng: endCoord[1],
-    type: 'POINT',
-    mode: 'WALK'
-  });
+  tempNodes.set(START_ID, { id: START_ID, name: startName, lat: startCoord[0], lng: startCoord[1], type: 'POINT', mode: 'WALK' });
+  tempNodes.set(END_ID, { id: END_ID, name: endName, lat: endCoord[0], lng: endCoord[1], type: 'POINT', mode: 'WALK' });
+  tempAdjList.set(START_ID, []);
+  tempAdjList.set(END_ID, []);
 
-  // 連接起點至周邊站點 (第一哩路：步行 / YouBike)
+  // 連接起點至周邊站點 (第一哩路)
   nodes.forEach((node, id) => {
-    if (id === START_ID || id === END_ID) return;
     const distFromStart = calculateDistanceKm(startCoord[0], startCoord[1], node.lat, node.lng);
     if (distFromStart < 2.5) {
       const mode: TransitMode = node.mode === 'BIKE' ? 'BIKE' : 'WALK';
       const speed = SPEED_CONFIG[mode];
       const duration = Math.round((distFromStart / speed) * 3600);
-      const waypoints = generatePathWaypoints(startCoord, [node.lat, node.lng], 6);
-
-      edges.push({
-        fromId: START_ID,
-        toId: id,
-        mode,
-        lineName: mode === 'BIKE' ? '騎 YouBike' : '步行前往站點',
-        color: mode === 'BIKE' ? '#f59e0b' : '#94a3b8',
-        path: waypoints,
-        distanceKm: distFromStart,
-        durationSec: duration
-      });
+      const waypoints = generatePathWaypoints(startCoord, [node.lat, node.lng], 5);
+      tempAdjList.get(START_ID)!.push({ fromId: START_ID, toId: id, mode, lineName: mode === 'BIKE' ? '騎 YouBike' : '步行前往站點', color: mode === 'BIKE' ? '#f59e0b' : '#94a3b8', path: waypoints, distanceKm: distFromStart, durationSec: duration });
     }
 
-    // 連接周邊站點至終點 (最後一哩路：步行 / YouBike)
+    // 連接周邊站點至終點 (最後一哩路)
     const distToEnd = calculateDistanceKm(node.lat, node.lng, endCoord[0], endCoord[1]);
     if (distToEnd < 2.5) {
       const mode: TransitMode = node.mode === 'BIKE' ? 'BIKE' : 'WALK';
       const speed = SPEED_CONFIG[mode];
       const duration = Math.round((distToEnd / speed) * 3600);
-      const waypoints = generatePathWaypoints([node.lat, node.lng], endCoord, 6);
-
-      edges.push({
-        fromId: id,
-        toId: END_ID,
-        mode,
-        lineName: mode === 'BIKE' ? '騎 YouBike 抵達' : '步行抵達',
-        color: mode === 'BIKE' ? '#f59e0b' : '#94a3b8',
-        path: waypoints,
-        distanceKm: distToEnd,
-        durationSec: duration
-      });
+      const waypoints = generatePathWaypoints([node.lat, node.lng], endCoord, 5);
+      tempAdjList.get(id)!.push({ fromId: id, toId: END_ID, mode, lineName: mode === 'BIKE' ? '騎 YouBike 抵達' : '步行抵達', color: mode === 'BIKE' ? '#f59e0b' : '#94a3b8', path: waypoints, distanceKm: distToEnd, durationSec: duration });
     }
   });
 
-  // 建立鄰接表
-  const adjList = new Map<string, GraphEdge[]>();
-  nodes.forEach((_, id) => adjList.set(id, []));
-  edges.forEach((edge) => {
-    adjList.get(edge.fromId)?.push(edge);
-  });
-
-  // A* Search
+  // ─── A* Search ─────────────────────────────────────────────────────────────
   const gScore = new Map<string, number>();
   const fScore = new Map<string, number>();
   const cameFrom = new Map<string, { edge: GraphEdge; fromNodeId: string }>();
 
-  nodes.forEach((_, id) => {
-    gScore.set(id, Infinity);
-    fScore.set(id, Infinity);
-  });
-
+  tempNodes.forEach((_, id) => { gScore.set(id, Infinity); fScore.set(id, Infinity); });
   gScore.set(START_ID, 0);
-  const startHeuristic = (calculateDistanceKm(startCoord[0], startCoord[1], endCoord[0], endCoord[1]) / SPEED_CONFIG.METRO) * 3600;
-  fScore.set(START_ID, startHeuristic);
+  fScore.set(START_ID, (directDist / SPEED_CONFIG.METRO) * 3600);
 
   const openSet = new Set<string>([START_ID]);
 
   while (openSet.size > 0) {
-    // 找出 fScore 最小的節點
     let current = Array.from(openSet).reduce((minId, id) =>
       (fScore.get(id) ?? Infinity) < (fScore.get(minId) ?? Infinity) ? id : minId
     );
 
     if (current === END_ID) {
-      // 成功找到路徑！重建路徑段 (Reconstruct Path)
+      // 路徑重建
       const segments: RouteSegment[] = [];
       let currId = END_ID;
 
       while (cameFrom.has(currId)) {
         const step = cameFrom.get(currId)!;
-        const fromNode = nodes.get(step.fromNodeId)!;
-        const toNode = nodes.get(currId)!;
+        const fromNode = tempNodes.get(step.fromNodeId)!;
+        const toNode = tempNodes.get(currId)!;
 
         segments.unshift({
           mode: step.edge.mode,
@@ -367,7 +278,6 @@ export function findMultiModalRoute(
         currId = step.fromNodeId;
       }
 
-      // 串接所有座標點
       const allWaypoints: [number, number][] = [];
       let totalDist = 0;
       let totalTime = 0;
@@ -376,7 +286,8 @@ export function findMultiModalRoute(
         totalDist += seg.distanceKm;
         totalTime += seg.durationSec;
         seg.path.forEach((pt) => {
-          if (allWaypoints.length === 0 || allWaypoints[allWaypoints.length - 1][0] !== pt[0] || allWaypoints[allWaypoints.length - 1][1] !== pt[1]) {
+          const last = allWaypoints[allWaypoints.length - 1];
+          if (!last || last[0] !== pt[0] || last[1] !== pt[1]) {
             allWaypoints.push(pt);
           }
         });
@@ -395,8 +306,8 @@ export function findMultiModalRoute(
 
     openSet.delete(current);
     const currG = gScore.get(current) ?? Infinity;
+    const neighbors = tempAdjList.get(current) || [];
 
-    const neighbors = adjList.get(current) || [];
     for (const edge of neighbors) {
       const neighborId = edge.toId;
       const tentativeG = currG + edge.durationSec;
@@ -405,33 +316,22 @@ export function findMultiModalRoute(
         cameFrom.set(neighborId, { edge, fromNodeId: current });
         gScore.set(neighborId, tentativeG);
 
-        const targetNode = nodes.get(neighborId)!;
+        const targetNode = tempNodes.get(neighborId)!;
         const h = (calculateDistanceKm(targetNode.lat, targetNode.lng, endCoord[0], endCoord[1]) / SPEED_CONFIG.METRO) * 3600;
         fScore.set(neighborId, tentativeG + h);
-
         openSet.add(neighborId);
       }
     }
   }
 
-  // Fallback: 若圖中無連通，使用多段逼真街道插值
+  // Fallback: 圖無連通路徑，YouBike 直接騎過去
   const fallbackPoints = generatePathWaypoints(startCoord, endCoord, 20);
   const fallbackDuration = Math.round((directDist / SPEED_CONFIG.BIKE) * 3600);
   return {
     totalDistanceKm: directDist,
     totalDurationSec: fallbackDuration,
-    summary: '街道快速接駁',
-    segments: [
-      {
-        mode: 'BIKE',
-        fromName: startName,
-        toName: endName,
-        path: fallbackPoints,
-        distanceKm: directDist,
-        durationSec: fallbackDuration,
-        color: '#f59e0b'
-      }
-    ],
+    summary: '街道直接騎乘',
+    segments: [{ mode: 'BIKE', fromName: startName, toName: endName, path: fallbackPoints, distanceKm: directDist, durationSec: fallbackDuration, color: '#f59e0b' }],
     allWaypoints: fallbackPoints
   };
 }
