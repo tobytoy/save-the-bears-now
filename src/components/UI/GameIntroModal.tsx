@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Play, MapPin, Shuffle, Sparkles, BookOpen, Loader2, CheckCircle2, Search } from 'lucide-react';
 import { CaptainBear, InjuredBear } from '../Assets/BearIllustrations';
 import { VehicleIcon } from '../Assets/VehicleIcons';
@@ -17,6 +17,7 @@ interface GameIntroModalProps {
 }
 
 const POPULAR_PRESETS = [
+  { name: '天母美國學校', query: '天母美國學校' },
   { name: '台北101 / 信義商圈', query: '台北101' },
   { name: '新北板橋車站', query: '板橋車站' },
   { name: '新莊體育館', query: '新莊體育館' },
@@ -28,16 +29,15 @@ const POPULAR_PRESETS = [
 
 export const GameIntroModal: React.FC<GameIntroModalProps> = ({ onStart, onOpenTutorial, transitNetwork }) => {
   const [selectedMode, setSelectedMode] = useState<'RANDOM' | 'CUSTOM'>('RANDOM');
-  const [addressInput, setAddressInput] = useState('');
+  const [addressInput, setAddressInput] = useState('天母美國學校');
   const [isSearching, setIsSearching] = useState(false);
   const [geocodedLocation, setGeocodedLocation] = useState<GeocodeResult | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const searchTimeoutRef = useRef<number | null>(null);
 
   // 執行地址或地標查詢
-  const handleSearchAddress = async (queryText?: string) => {
-    const text = queryText || addressInput;
-    if (!text.trim()) return;
-
+  const performGeocode = async (text: string): Promise<GeocodeResult | null> => {
+    if (!text.trim()) return null;
     setIsSearching(true);
     setSearchError(null);
 
@@ -45,28 +45,52 @@ export const GameIntroModal: React.FC<GameIntroModalProps> = ({ onStart, onOpenT
       const result = await geocodeTaiwanAddress(text, transitNetwork);
       if (result) {
         setGeocodedLocation(result);
+        return result;
       } else {
-        setSearchError('找不到該地址或地標，請嘗試輸入如「台北市信義區...」或點選推薦地標！');
+        setSearchError('找不到該地址或地標，請嘗試輸入如「台北市士林區...」或點選推薦地標！');
+        return null;
       }
     } catch {
-      setSearchError('查詢逾時，請檢查網路連線或直接使用推薦地標！');
+      setSearchError('查詢逾時，已自動切換就近大眾站點！');
+      return null;
     } finally {
       setIsSearching(false);
     }
   };
 
-  // 開始遊戲
-  const handleStartGame = () => {
-    if (selectedMode === 'CUSTOM' && geocodedLocation) {
-      onStart({
-        mode: 'CUSTOM',
-        customCoord: [geocodedLocation.lat, geocodedLocation.lng],
-        locationName: geocodedLocation.displayName,
-        customStationName: geocodedLocation.matchedStationName
-      });
-    } else {
-      onStart({ mode: 'RANDOM' });
+  // 自動依輸入內容防抖搜尋 (Debounced Auto Search)
+  useEffect(() => {
+    if (selectedMode !== 'CUSTOM' || !addressInput.trim()) return;
+
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    searchTimeoutRef.current = window.setTimeout(() => {
+      performGeocode(addressInput);
+    }, 450);
+
+    return () => {
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    };
+  }, [addressInput, selectedMode]);
+
+  // 開始遊戲 (若尚未定位完畢，自動先完成定位再出發)
+  const handleStartGame = async () => {
+    if (selectedMode === 'CUSTOM') {
+      let loc = geocodedLocation;
+      if (!loc && addressInput.trim()) {
+        loc = await performGeocode(addressInput.trim());
+      }
+      if (loc) {
+        onStart({
+          mode: 'CUSTOM',
+          customCoord: [loc.lat, loc.lng],
+          locationName: loc.displayName,
+          customStationName: loc.matchedStationName
+        });
+        return;
+      }
     }
+    // 隨機開始
+    onStart({ mode: 'RANDOM' });
   };
 
   return (
@@ -106,7 +130,12 @@ export const GameIntroModal: React.FC<GameIntroModalProps> = ({ onStart, onOpenT
           </button>
 
           <button
-            onClick={() => setSelectedMode('CUSTOM')}
+            onClick={() => {
+              setSelectedMode('CUSTOM');
+              if (addressInput && !geocodedLocation) {
+                performGeocode(addressInput);
+              }
+            }}
             className={`py-2 px-3 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1.5 ${
               selectedMode === 'CUSTOM'
                 ? 'bg-gradient-to-r from-sky-500 to-emerald-500 text-slate-950 shadow-md'
@@ -136,18 +165,21 @@ export const GameIntroModal: React.FC<GameIntroModalProps> = ({ onStart, onOpenT
           <div className="w-full bg-slate-800/80 border border-slate-700/80 rounded-2xl p-3.5 space-y-3 text-left text-xs text-slate-300 animate-in fade-in duration-200">
             <div>
               <label className="block text-sky-300 font-bold mb-1.5">
-                輸入台灣地址、路名或地標名稱（例如：我家附近、公司、台北101）：
+                輸入台灣地址、路名或地標名稱（例如：天母美國學校、台北101、我家附近）：
               </label>
               <div className="flex items-center gap-2">
                 <div className="relative flex-1">
                   <input
                     type="text"
                     value={addressInput}
-                    onChange={(e) => setAddressInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') handleSearchAddress();
+                    onChange={(e) => {
+                      setAddressInput(e.target.value);
+                      setGeocodedLocation(null);
                     }}
-                    placeholder="例如：台北市信義區市府路1號 / 新莊體育館..."
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') performGeocode(addressInput);
+                    }}
+                    placeholder="例如：天母美國學校 / 台北市士林區中山北路六段..."
                     className="w-full bg-slate-900 border border-slate-700 focus:border-sky-400 text-slate-100 text-xs px-3 py-2.5 rounded-xl outline-none transition-colors"
                   />
                   {addressInput && (
@@ -164,7 +196,7 @@ export const GameIntroModal: React.FC<GameIntroModalProps> = ({ onStart, onOpenT
                 </div>
 
                 <button
-                  onClick={() => handleSearchAddress()}
+                  onClick={() => performGeocode(addressInput)}
                   disabled={isSearching || !addressInput.trim()}
                   className="bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-bold px-3.5 py-2.5 rounded-xl flex items-center gap-1.5 shadow transition-all active:scale-95 flex-shrink-0"
                 >
@@ -187,9 +219,13 @@ export const GameIntroModal: React.FC<GameIntroModalProps> = ({ onStart, onOpenT
                     key={p.name}
                     onClick={() => {
                       setAddressInput(p.query);
-                      handleSearchAddress(p.query);
+                      performGeocode(p.query);
                     }}
-                    className="text-[10px] bg-slate-900/90 hover:bg-slate-700 border border-slate-700 hover:border-sky-400 text-slate-300 hover:text-white px-2 py-1 rounded-lg transition-all"
+                    className={`text-[10px] border px-2 py-1 rounded-lg transition-all ${
+                      addressInput === p.query
+                        ? 'bg-sky-600 text-white border-sky-400 font-bold'
+                        : 'bg-slate-900/90 hover:bg-slate-700 border-slate-700 hover:border-sky-400 text-slate-300 hover:text-white'
+                    }`}
                   >
                     {p.name}
                   </button>
@@ -199,14 +235,14 @@ export const GameIntroModal: React.FC<GameIntroModalProps> = ({ onStart, onOpenT
 
             {/* Geocoded Result Card */}
             {geocodedLocation && (
-              <div className="bg-emerald-950/60 border border-emerald-500/50 rounded-xl p-2.5 flex items-start gap-2.5 animate-in fade-in">
+              <div className="bg-emerald-950/70 border-2 border-emerald-500/60 rounded-xl p-2.5 flex items-start gap-2.5 animate-in fade-in">
                 <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
-                <div className="min-w-0">
-                  <div className="font-bold text-emerald-300 truncate">
-                    已定位：{geocodedLocation.displayName}
+                <div className="min-w-0 flex-1">
+                  <div className="font-black text-emerald-300 text-xs truncate">
+                    已精確定位：{geocodedLocation.displayName}
                   </div>
-                  <div className="text-[11px] text-slate-300 mt-0.5">
-                    最近站點：<span className="text-amber-300 font-bold">{geocodedLocation.matchedStationName}</span>
+                  <div className="text-[11px] text-slate-200 mt-0.5">
+                    出發座標：<span className="font-mono text-emerald-400">{geocodedLocation.lat.toFixed(4)}, {geocodedLocation.lng.toFixed(4)}</span> | 最近站點：<span className="text-amber-300 font-bold">{geocodedLocation.matchedStationName}</span>
                   </div>
                 </div>
               </div>
@@ -240,15 +276,26 @@ export const GameIntroModal: React.FC<GameIntroModalProps> = ({ onStart, onOpenT
 
           <button
             onClick={handleStartGame}
-            disabled={selectedMode === 'CUSTOM' && !geocodedLocation && isSearching}
+            disabled={isSearching}
             className="w-full sm:w-1/2 bg-gradient-to-r from-amber-400 via-orange-500 to-rose-500 hover:from-amber-300 hover:to-rose-400 text-slate-950 font-black py-3 rounded-2xl text-xs shadow-xl transition-all duration-200 hover:scale-102 active:scale-98 flex items-center justify-center gap-1.5"
           >
-            <Play className="w-4 h-4 fill-slate-950" />
-            <span>
-              {selectedMode === 'CUSTOM' && geocodedLocation
-                ? `從 ${geocodedLocation.displayName.slice(0, 8)} 出發！`
-                : '出發！開始救援'}
-            </span>
+            {isSearching ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>定位中...</span>
+              </>
+            ) : (
+              <>
+                <Play className="w-4 h-4 fill-slate-950" />
+                <span>
+                  {selectedMode === 'CUSTOM' && geocodedLocation
+                    ? `從 ${geocodedLocation.displayName.slice(0, 8)} 出發！`
+                    : selectedMode === 'CUSTOM' && addressInput.trim()
+                    ? `從 ${addressInput.slice(0, 8)} 出發！`
+                    : '出發！開始救援'}
+                </span>
+              </>
+            )}
           </button>
         </div>
       </div>
