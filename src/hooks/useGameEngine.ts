@@ -12,6 +12,7 @@ import {
   BearInjuryType
 } from '../types';
 import { calculateDistanceKm, generatePathWaypoints } from '../utils/geo';
+import { findMultiModalRoute } from '../utils/pathfinding';
 import { sound } from '../utils/audio';
 import { fetchLiveEmergencyData } from '../services/emergencyService';
 
@@ -111,7 +112,9 @@ export function useGameEngine() {
     carryingBear: null,
     targetCoord: null,
     path: [],
-    currentPathIndex: 0
+    currentPathIndex: 0,
+    activeRouteSummary: undefined,
+    plannedWaypoints: []
   });
 
   const [stats, setStats] = useState<GameStats>({
@@ -251,7 +254,9 @@ export function useGameEngine() {
       carryingBear: null,
       targetCoord: null,
       path: [],
-      currentPathIndex: 0
+      currentPathIndex: 0,
+      activeRouteSummary: undefined,
+      plannedWaypoints: []
     });
 
     setActiveBears([]);
@@ -270,7 +275,6 @@ export function useGameEngine() {
     const timer = setInterval(() => {
       setStats((prev) => ({ ...prev, gameTimeSec: prev.gameTimeSec + 1 }));
 
-      // Decay health of active unrescued or carried bears
       setActiveBears((prevBears) =>
         prevBears
           .map((b) => {
@@ -287,7 +291,6 @@ export function useGameEngine() {
           })
       );
 
-      // If player is carrying bear, update carried bear health
       setPlayer((p) => {
         if (p.carryingBear) {
           const updatedHealth = Math.max(0, p.carryingBear.currentHealth - p.carryingBear.decayRate);
@@ -319,26 +322,48 @@ export function useGameEngine() {
     }
   }, [gameState, activeBears.length, player.carryingBear, spawnBear]);
 
-  // 7. Player Movement Physics (Differentiate Walk vs Transit Speed)
-  const moveToLocation = useCallback(
-    (targetLat: number, targetLng: number, stationName: string, mode: TransitMode) => {
+  // 7. A* Multi-Modal Transit Path Execution Engine
+  // 嚴格沿著大眾運具實體路線與軌道站點平滑移動
+  const executePathRoute = useCallback(
+    (targetLat: number, targetLng: number, targetName: string, explicitMode?: TransitMode) => {
       if (player.isMoving) return;
 
       const distKm = calculateDistanceKm(player.lat, player.lng, targetLat, targetLng);
       if (distKm < 0.0002) return;
 
-      const speedKmH = transitNetwork?.speeds[mode] || (mode === 'WALK' ? 4.5 : 30);
-      
-      // Walking has more granular small steps, transit has swift transit interpolation
-      const steps = mode === 'WALK' ? Math.max(10, Math.min(25, Math.round(distKm * 50))) : Math.max(15, Math.min(45, Math.round(distKm * 15)));
-      const pathWaypoints = generatePathWaypoints([player.lat, player.lng], [targetLat, targetLng], steps);
+      let waypoints: [number, number][] = [];
+      let routeSummary = `前往 ${targetName}`;
+      let primaryMode: TransitMode = explicitMode || player.currentMode;
 
-      sound.playTransit(mode);
+      if (transitNetwork) {
+        // 使用 Multi-modal A* 計算真實大眾運輸路線 (含步行接駁 ➔ 捷運軌道 ➔ 公車路線)
+        const plan = findMultiModalRoute(
+          [player.lat, player.lng],
+          player.currentStationName || '目前位置',
+          [targetLat, targetLng],
+          targetName,
+          transitNetwork
+        );
 
-      // Record transit mode used
-      setUsedModesInCurrentMission((prev) => (prev.includes(mode) ? prev : [...prev, mode]));
+        waypoints = plan.allWaypoints;
+        routeSummary = plan.summary;
+        // 若有捷運段優先標為捷運，否則依路線判斷
+        const firstTransitSeg = plan.segments.find((s) => s.mode !== 'WALK');
+        if (firstTransitSeg) {
+          primaryMode = firstTransitSeg.mode;
+        } else {
+          primaryMode = 'WALK';
+        }
+      } else {
+        waypoints = generatePathWaypoints([player.lat, player.lng], [targetLat, targetLng], 20);
+      }
 
-      // Calculate Carbon Saved
+      if (waypoints.length < 2) return;
+
+      sound.playTransit(primaryMode);
+
+      setUsedModesInCurrentMission((prev) => (prev.includes(primaryMode) ? prev : [...prev, primaryMode]));
+
       const carbon = distKm * 0.17;
       setStats((s) => ({
         ...s,
@@ -346,41 +371,46 @@ export function useGameEngine() {
         carbonSavedKg: Number((s.carbonSavedKg + carbon).toFixed(2))
       }));
 
-      const isTransit = mode !== 'WALK';
+      const isTransit = primaryMode !== 'WALK';
 
       setPlayer((p) => ({
         ...p,
         isMoving: true,
-        currentMode: mode,
+        currentMode: primaryMode,
         isOnTransit: isTransit,
-        boardedVehicleName: isTransit ? stationName : undefined,
+        boardedVehicleName: isTransit ? targetName : undefined,
         targetCoord: [targetLat, targetLng],
-        path: pathWaypoints,
+        path: waypoints,
+        plannedWaypoints: waypoints,
+        activeRouteSummary: routeSummary,
         currentPathIndex: 0
       }));
 
-      // Frame interval: Walk is slower (45ms), High speed transit is super fast (15~20ms)
-      const stepInterval = mode === 'WALK' ? 45 : Math.max(12, Math.min(30, Math.round(900 / speedKmH)));
+      // Frame interval: 依真實速度調整 (捷運/高鐵沿軌道極速行進，步行平穩)
+      const speedKmH = transitNetwork?.speeds[primaryMode] || (primaryMode === 'WALK' ? 4.5 : 45);
+      const stepInterval = Math.max(12, Math.min(38, Math.round(750 / speedKmH)));
 
       let currentIndex = 0;
       if (moveTimerRef.current) clearInterval(moveTimerRef.current);
 
       moveTimerRef.current = window.setInterval(() => {
         currentIndex++;
-        if (currentIndex >= pathWaypoints.length) {
+        if (currentIndex >= waypoints.length) {
           if (moveTimerRef.current) clearInterval(moveTimerRef.current);
           setPlayer((p) => ({
             ...p,
             lat: targetLat,
             lng: targetLng,
-            currentStationName: stationName,
+            currentStationName: targetName,
             isMoving: false,
             targetCoord: null,
             path: [],
+            plannedWaypoints: [],
+            activeRouteSummary: undefined,
             currentPathIndex: 0
           }));
         } else {
-          const pt = pathWaypoints[currentIndex];
+          const pt = waypoints[currentIndex];
           setPlayer((p) => ({
             ...p,
             lat: pt[0],
@@ -399,7 +429,6 @@ export function useGameEngine() {
       if (player.isMoving) return;
 
       if (player.isOnTransit) {
-        // 下車 -> 切換為步行
         sound.playTransit('WALK');
         setPlayer((p) => ({
           ...p,
@@ -408,12 +437,10 @@ export function useGameEngine() {
           boardedVehicleName: undefined
         }));
       } else {
-        // 上車 -> 優先使用指定的運具或尋找周邊最近的運具 (YouBike / 捷運 / 公車)
         let modeToBoard: TransitMode = forcedMode || 'BIKE';
-        let vehicleName = forcedName || 'YouBike 單車';
+        let vehicleName = forcedName || 'YouBike 微笑單車';
 
         if (!forcedMode && transitNetwork) {
-          // 找最近的 YouBike 或捷運站
           const nearestYoubike = [...transitNetwork.youbike].sort(
             (a, b) => calculateDistanceKm(player.lat, player.lng, a.lat, a.lng) - calculateDistanceKm(player.lat, player.lng, b.lat, b.lng)
           )[0];
@@ -440,18 +467,16 @@ export function useGameEngine() {
   );
 
   // 9. Action: Directional Step (WASD / Arrow Keys / D-Pad)
-  // 小狗步行時移動幅度適中 (0.0006)，在運具上 (捷運/單車/高鐵) 移動顯著更快！
   const moveByDirection = useCallback(
     (dir: 'UP' | 'DOWN' | 'LEFT' | 'RIGHT') => {
       if (player.isMoving) return;
 
-      // 速度物理換算：步行小步走，運具高速滑行
-      let delta = 0.0006; // 步行 (約 60 公尺，穩定逼真)
+      let delta = 0.0006;
       if (player.isOnTransit) {
-        if (player.currentMode === 'BIKE') delta = 0.0025; // YouBike (約 250 公尺，快 4 倍)
-        else if (player.currentMode === 'BUS') delta = 0.0045; // 公車 (約 450 公尺，快 8 倍)
-        else if (player.currentMode === 'METRO') delta = 0.0080; // 捷運 (約 800 公尺，快 13 倍)
-        else if (player.currentMode === 'THSR' || player.currentMode === 'TRA') delta = 0.018; // 高鐵 (約 1.8 公里，快 30 倍)
+        if (player.currentMode === 'BIKE') delta = 0.0022;
+        else if (player.currentMode === 'BUS') delta = 0.0040;
+        else if (player.currentMode === 'METRO') delta = 0.0075;
+        else if (player.currentMode === 'THSR' || player.currentMode === 'TRA') delta = 0.016;
       }
 
       let targetLat = player.lat;
@@ -466,9 +491,9 @@ export function useGameEngine() {
         ? `${player.boardedVehicleName || '大眾運具'} 行駛中`
         : '街道步行探索';
 
-      moveToLocation(targetLat, targetLng, locDesc, player.currentMode);
+      executePathRoute(targetLat, targetLng, locDesc, player.currentMode);
     },
-    [player, moveToLocation]
+    [player, executePathRoute]
   );
 
   // 10. Action: Pickup Bear
@@ -477,7 +502,7 @@ export function useGameEngine() {
       if (player.carryingBear || player.isMoving) return;
       const dist = calculateDistanceKm(player.lat, player.lng, bear.lat, bear.lng);
       if (dist > 0.8) {
-        alert(`距離「${bear.name}」太遠（約 ${Math.round(dist * 1000)} 公尺）！請先點擊鄰近捷運/YouBike站搭車前往。`);
+        alert(`距離「${bear.name}」太遠（約 ${Math.round(dist * 1000)} 公尺）！請先搭車至鄰近站點。`);
         return;
       }
 
@@ -505,7 +530,6 @@ export function useGameEngine() {
       const timeSpent = Math.round((Date.now() - missionStartTime) / 1000);
       const remainingHpRatio = bear.currentHealth / bear.maxHealth;
 
-      // Hospital Congestion Rating Logic
       const isOvercrowded = hospital.inform === 'Y' || (hospital.waitBed && hospital.waitBed > 15);
       const isOptimal = (hospital.waitBed || 0) < 5 && hospital.inform === 'N';
 
@@ -572,7 +596,7 @@ export function useGameEngine() {
     }
   }, [player, hospitals, activeBears, deliverBearToHospital, pickupBear]);
 
-  // 13. Global Keyboard Controller (WASD/方向鍵 + Space送醫 + 'Z'鍵上下運具 + 1-5切換)
+  // 13. Global Keyboard Controller
   useEffect(() => {
     if (gameState !== 'PLAYING') return;
 
@@ -603,7 +627,6 @@ export function useGameEngine() {
           handleQuickAction();
           break;
         case 'KeyZ':
-          // 按 'Z' 鍵上下運具
           toggleBoardTransit();
           break;
         case 'Digit1':
@@ -645,7 +668,7 @@ export function useGameEngine() {
     startGame,
     spawnBear,
     spawnBatchBears,
-    moveToLocation,
+    moveToLocation: executePathRoute,
     moveByDirection,
     toggleBoardTransit,
     handleQuickAction,

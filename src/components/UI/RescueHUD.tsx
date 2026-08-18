@@ -276,11 +276,19 @@ export const RescueHUD: React.FC<RescueHUDProps> = ({
               )}
 
               {player.isMoving && (
-                <span className="text-[10px] text-sky-300 bg-sky-500/20 px-1.5 py-0.5 rounded-full font-bold animate-pulse">
-                  移動中
+                <span className="text-[10px] text-sky-300 bg-sky-500/20 border border-sky-400/40 px-2 py-0.5 rounded-full font-bold animate-pulse">
+                  🚀 沿軌道/路網移動中
                 </span>
               )}
             </div>
+
+            {/* A* Active Route Itinerary Banner */}
+            {player.isMoving && player.activeRouteSummary && (
+              <div className="mt-1 text-[11px] bg-sky-950/80 border border-sky-500/40 px-2.5 py-1 rounded-xl text-sky-200 font-bold flex items-center gap-1.5 animate-in fade-in">
+                <Navigation className="w-3.5 h-3.5 text-sky-400 flex-shrink-0 animate-spin-slow" />
+                <span className="truncate">A* 路徑：{player.activeRouteSummary}</span>
+              </div>
+            )}
 
             {/* Carrying Bear Health Bar or Transit Toggle Hint */}
             {player.carryingBear ? (

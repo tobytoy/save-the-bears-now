@@ -109,6 +109,8 @@ export interface Player {
   targetCoord: [number, number] | null;
   path: [number, number][];
   currentPathIndex: number;
+  activeRouteSummary?: string;
+  plannedWaypoints?: [number, number][];
 }
 
 export interface GameStats {

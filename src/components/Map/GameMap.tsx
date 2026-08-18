@@ -340,20 +340,33 @@ export const GameMap: React.FC<GameMapProps> = ({
           </Marker>
         ))}
 
-        {/* Player Path Trail */}
-        {player.isMoving && player.targetCoord && (
-          <Polyline
-            positions={[
-              [player.lat, player.lng],
-              player.targetCoord
-            ]}
-            pathOptions={{
-              color: '#38bdf8',
-              weight: 4,
-              opacity: 0.85,
-              dashArray: '4, 8'
-            }}
-          />
+        {/* A* Multi-Modal Planned Transit Route Trail */}
+        {player.isMoving && player.plannedWaypoints && player.plannedWaypoints.length > 1 && (
+          <>
+            {/* Outer Glow Route */}
+            <Polyline
+              positions={player.plannedWaypoints}
+              pathOptions={{
+                color: '#38bdf8',
+                weight: 8,
+                opacity: 0.4,
+                lineCap: 'round',
+                lineJoin: 'round'
+              }}
+            />
+            {/* Inner Route Core */}
+            <Polyline
+              positions={player.plannedWaypoints}
+              pathOptions={{
+                color: '#f59e0b',
+                weight: 4,
+                opacity: 0.9,
+                dashArray: '6, 6',
+                lineCap: 'round',
+                lineJoin: 'round'
+              }}
+            />
+          </>
         )}
 
         {/* Hospitals */}
