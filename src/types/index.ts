@@ -102,6 +102,8 @@ export interface Player {
   lng: number;
   currentStationName: string;
   currentMode: TransitMode;
+  isOnTransit: boolean; // 在運具上狀態
+  boardedVehicleName?: string;
   isMoving: boolean;
   carryingBear: Bear | null;
   targetCoord: [number, number] | null;

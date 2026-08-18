@@ -104,7 +104,9 @@ export function useGameEngine() {
     lat: 25.0463,
     lng: 121.5175,
     currentStationName: '台北車站',
-    currentMode: 'METRO',
+    currentMode: 'WALK',
+    isOnTransit: false,
+    boardedVehicleName: undefined,
     isMoving: false,
     carryingBear: null,
     targetCoord: null,
@@ -178,10 +180,8 @@ export function useGameEngine() {
         lng = customCoord[1];
         locName = customLocName || '指定搜救區域';
       } else {
-        // Randomly pick a spot from diverse realistic locations
         const pickedLocation =
           DIVERSE_SPAWN_LOCATIONS[Math.floor(Math.random() * DIVERSE_SPAWN_LOCATIONS.length)];
-        // Add subtle micro random jitter (+/- 300m)
         const jitterLat = (Math.random() - 0.5) * 0.005;
         const jitterLng = (Math.random() - 0.5) * 0.005;
         lat = pickedLocation.lat + jitterLat;
@@ -227,7 +227,7 @@ export function useGameEngine() {
     [spawnBear]
   );
 
-  // 4. Start Game with High Randomness (Random starting hub + 3 widely distributed bears)
+  // 4. Start Game with High Randomness
   const startGame = useCallback(() => {
     setGameState('PLAYING');
     setStats({
@@ -239,13 +239,14 @@ export function useGameEngine() {
       gameTimeSec: 0
     });
 
-    // Randomize player starting hub
     const startHub = INITIAL_PLAYER_HUBS[Math.floor(Math.random() * INITIAL_PLAYER_HUBS.length)];
     setPlayer({
       lat: startHub.lat,
       lng: startHub.lng,
       currentStationName: startHub.name,
-      currentMode: 'METRO',
+      currentMode: 'WALK',
+      isOnTransit: false,
+      boardedVehicleName: undefined,
       isMoving: false,
       carryingBear: null,
       targetCoord: null,
@@ -253,10 +254,8 @@ export function useGameEngine() {
       currentPathIndex: 0
     });
 
-    // Clear and spawn 3 bears across completely random distinct locations
     setActiveBears([]);
     setTimeout(() => {
-      // Pick 3 non-duplicate random locations
       const shuffled = [...DIVERSE_SPAWN_LOCATIONS].sort(() => 0.5 - Math.random());
       for (let i = 0; i < 3; i++) {
         spawnBear([shuffled[i].lat, shuffled[i].lng], shuffled[i].name);
@@ -309,7 +308,7 @@ export function useGameEngine() {
     return () => clearInterval(timer);
   }, [gameState]);
 
-  // 6. Auto-replenish bears if all are rescued (Always keep at least 2 active bears)
+  // 6. Auto-replenish bears if all are rescued
   useEffect(() => {
     if (gameState === 'PLAYING' && activeBears.length === 0 && !player.carryingBear) {
       const timer = setTimeout(() => {
@@ -320,16 +319,18 @@ export function useGameEngine() {
     }
   }, [gameState, activeBears.length, player.carryingBear, spawnBear]);
 
-  // 7. Player Movement Physics (Smooth Transit Interpolation)
+  // 7. Player Movement Physics (Differentiate Walk vs Transit Speed)
   const moveToLocation = useCallback(
     (targetLat: number, targetLng: number, stationName: string, mode: TransitMode) => {
       if (player.isMoving) return;
 
       const distKm = calculateDistanceKm(player.lat, player.lng, targetLat, targetLng);
-      if (distKm < 0.0005) return;
+      if (distKm < 0.0002) return;
 
-      const speedKmH = transitNetwork?.speeds[mode] || 30;
-      const steps = Math.max(12, Math.min(50, Math.round(distKm * 20)));
+      const speedKmH = transitNetwork?.speeds[mode] || (mode === 'WALK' ? 4.5 : 30);
+      
+      // Walking has more granular small steps, transit has swift transit interpolation
+      const steps = mode === 'WALK' ? Math.max(10, Math.min(25, Math.round(distKm * 50))) : Math.max(15, Math.min(45, Math.round(distKm * 15)));
       const pathWaypoints = generatePathWaypoints([player.lat, player.lng], [targetLat, targetLng], steps);
 
       sound.playTransit(mode);
@@ -337,7 +338,7 @@ export function useGameEngine() {
       // Record transit mode used
       setUsedModesInCurrentMission((prev) => (prev.includes(mode) ? prev : [...prev, mode]));
 
-      // Calculate Carbon Saved (0.17 kg CO2 / km vs private gas car)
+      // Calculate Carbon Saved
       const carbon = distKm * 0.17;
       setStats((s) => ({
         ...s,
@@ -345,16 +346,21 @@ export function useGameEngine() {
         carbonSavedKg: Number((s.carbonSavedKg + carbon).toFixed(2))
       }));
 
+      const isTransit = mode !== 'WALK';
+
       setPlayer((p) => ({
         ...p,
         isMoving: true,
         currentMode: mode,
+        isOnTransit: isTransit,
+        boardedVehicleName: isTransit ? stationName : undefined,
         targetCoord: [targetLat, targetLng],
         path: pathWaypoints,
         currentPathIndex: 0
       }));
 
-      const stepInterval = Math.max(15, Math.min(50, Math.round(1200 / speedKmH)));
+      // Frame interval: Walk is slower (45ms), High speed transit is super fast (15~20ms)
+      const stepInterval = mode === 'WALK' ? 45 : Math.max(12, Math.min(30, Math.round(900 / speedKmH)));
 
       let currentIndex = 0;
       if (moveTimerRef.current) clearInterval(moveTimerRef.current);
@@ -387,12 +393,67 @@ export function useGameEngine() {
     [player, transitNetwork]
   );
 
-  // 8. Action: Directional Step (WASD / Arrow Keys / D-Pad)
+  // 8. Toggle Board / Alight Transit (上下運具切換，按 'Z' 鍵)
+  const toggleBoardTransit = useCallback(
+    (forcedMode?: TransitMode, forcedName?: string) => {
+      if (player.isMoving) return;
+
+      if (player.isOnTransit) {
+        // 下車 -> 切換為步行
+        sound.playTransit('WALK');
+        setPlayer((p) => ({
+          ...p,
+          isOnTransit: false,
+          currentMode: 'WALK',
+          boardedVehicleName: undefined
+        }));
+      } else {
+        // 上車 -> 優先使用指定的運具或尋找周邊最近的運具 (YouBike / 捷運 / 公車)
+        let modeToBoard: TransitMode = forcedMode || 'BIKE';
+        let vehicleName = forcedName || 'YouBike 單車';
+
+        if (!forcedMode && transitNetwork) {
+          // 找最近的 YouBike 或捷運站
+          const nearestYoubike = [...transitNetwork.youbike].sort(
+            (a, b) => calculateDistanceKm(player.lat, player.lng, a.lat, a.lng) - calculateDistanceKm(player.lat, player.lng, b.lat, b.lng)
+          )[0];
+
+          if (nearestYoubike && calculateDistanceKm(player.lat, player.lng, nearestYoubike.lat, nearestYoubike.lng) < 1.5) {
+            modeToBoard = 'BIKE';
+            vehicleName = nearestYoubike.name;
+          } else {
+            modeToBoard = 'BIKE';
+            vehicleName = 'YouBike 微笑單車';
+          }
+        }
+
+        sound.playTransit(modeToBoard);
+        setPlayer((p) => ({
+          ...p,
+          isOnTransit: true,
+          currentMode: modeToBoard,
+          boardedVehicleName: vehicleName
+        }));
+      }
+    },
+    [player, transitNetwork]
+  );
+
+  // 9. Action: Directional Step (WASD / Arrow Keys / D-Pad)
+  // 小狗步行時移動幅度適中 (0.0006)，在運具上 (捷運/單車/高鐵) 移動顯著更快！
   const moveByDirection = useCallback(
     (dir: 'UP' | 'DOWN' | 'LEFT' | 'RIGHT') => {
       if (player.isMoving) return;
 
-      const delta = player.currentMode === 'BIKE' ? 0.003 : player.currentMode === 'METRO' ? 0.005 : 0.0015;
+      // 速度物理換算：步行小步走，運具高速滑行
+      let delta = 0.0006; // 步行 (約 60 公尺，穩定逼真)
+      if (player.isOnTransit) {
+        if (player.currentMode === 'BIKE') delta = 0.0025; // YouBike (約 250 公尺，快 4 倍)
+        else if (player.currentMode === 'BUS') delta = 0.0045; // 公車 (約 450 公尺，快 8 倍)
+        else if (player.currentMode === 'METRO') delta = 0.0080; // 捷運 (約 800 公尺，快 13 倍)
+        else if (player.currentMode === 'THSR' || player.currentMode === 'TRA') delta = 0.018; // 高鐵 (約 1.8 公里，快 30 倍)
+      }
+
       let targetLat = player.lat;
       let targetLng = player.lng;
 
@@ -401,12 +462,16 @@ export function useGameEngine() {
       if (dir === 'RIGHT') targetLng += delta;
       if (dir === 'LEFT') targetLng -= delta;
 
-      moveToLocation(targetLat, targetLng, '市區街區移動', player.currentMode);
+      const locDesc = player.isOnTransit
+        ? `${player.boardedVehicleName || '大眾運具'} 行駛中`
+        : '街道步行探索';
+
+      moveToLocation(targetLat, targetLng, locDesc, player.currentMode);
     },
     [player, moveToLocation]
   );
 
-  // 9. Action: Pickup Bear
+  // 10. Action: Pickup Bear
   const pickupBear = useCallback(
     (bear: Bear) => {
       if (player.carryingBear || player.isMoving) return;
@@ -425,7 +490,7 @@ export function useGameEngine() {
     [player]
   );
 
-  // 10. Action: Deliver Bear to Hospital ER
+  // 11. Action: Deliver Bear to Hospital ER
   const deliverBearToHospital = useCallback(
     (hospital: Hospital) => {
       if (!player.carryingBear || player.isMoving) return;
@@ -488,7 +553,7 @@ export function useGameEngine() {
     [player, missionStartTime, usedModesInCurrentMission]
   );
 
-  // 11. Quick Action for Spacebar / Enter
+  // 12. Quick Action for Spacebar / Enter
   const handleQuickAction = useCallback(() => {
     if (player.carryingBear) {
       const nearHosp = hospitals.find(
@@ -507,7 +572,7 @@ export function useGameEngine() {
     }
   }, [player, hospitals, activeBears, deliverBearToHospital, pickupBear]);
 
-  // 12. Global Keyboard Controller
+  // 13. Global Keyboard Controller (WASD/方向鍵 + Space送醫 + 'Z'鍵上下運具 + 1-5切換)
   useEffect(() => {
     if (gameState !== 'PLAYING') return;
 
@@ -537,27 +602,31 @@ export function useGameEngine() {
         case 'Enter':
           handleQuickAction();
           break;
+        case 'KeyZ':
+          // 按 'Z' 鍵上下運具
+          toggleBoardTransit();
+          break;
         case 'Digit1':
-          setPlayer((p) => ({ ...p, currentMode: 'WALK' }));
+          setPlayer((p) => ({ ...p, currentMode: 'WALK', isOnTransit: false, boardedVehicleName: undefined }));
           break;
         case 'Digit2':
-          setPlayer((p) => ({ ...p, currentMode: 'BIKE' }));
+          setPlayer((p) => ({ ...p, currentMode: 'BIKE', isOnTransit: true, boardedVehicleName: 'YouBike 微笑單車' }));
           break;
         case 'Digit3':
-          setPlayer((p) => ({ ...p, currentMode: 'METRO' }));
+          setPlayer((p) => ({ ...p, currentMode: 'METRO', isOnTransit: true, boardedVehicleName: '台北捷運' }));
           break;
         case 'Digit4':
-          setPlayer((p) => ({ ...p, currentMode: 'BUS' }));
+          setPlayer((p) => ({ ...p, currentMode: 'BUS', isOnTransit: true, boardedVehicleName: '市區公車' }));
           break;
         case 'Digit5':
-          setPlayer((p) => ({ ...p, currentMode: 'THSR' }));
+          setPlayer((p) => ({ ...p, currentMode: 'THSR', isOnTransit: true, boardedVehicleName: '台灣高鐵' }));
           break;
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [gameState, moveByDirection, handleQuickAction]);
+  }, [gameState, moveByDirection, handleQuickAction, toggleBoardTransit]);
 
   return {
     gameState,
@@ -578,6 +647,7 @@ export function useGameEngine() {
     spawnBatchBears,
     moveToLocation,
     moveByDirection,
+    toggleBoardTransit,
     handleQuickAction,
     pickupBear,
     deliverBearToHospital

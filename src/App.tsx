@@ -29,6 +29,7 @@ export function App() {
     spawnBatchBears,
     moveToLocation,
     moveByDirection,
+    toggleBoardTransit,
     handleQuickAction,
     pickupBear,
     deliverBearToHospital
@@ -83,6 +84,8 @@ export function App() {
         <DirectionPad
           onDirectionMove={moveByDirection}
           onQuickAction={handleQuickAction}
+          onToggleBoard={toggleBoardTransit}
+          isOnTransit={player.isOnTransit}
           currentMode={player.currentMode}
           disabled={player.isMoving}
         />
@@ -95,6 +98,7 @@ export function App() {
         hospitals={hospitals}
         transitNetwork={transitNetwork}
         onMove={(lat, lng, name, mode) => moveToLocation(lat, lng, name, mode)}
+        onToggleBoard={toggleBoardTransit}
         onPickupBear={pickupBear}
         onDeliverBear={deliverBearToHospital}
       />

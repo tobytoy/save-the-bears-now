@@ -318,10 +318,14 @@ export const EmergencyTutorialModal: React.FC<EmergencyTutorialModalProps> = ({ 
               </div>
 
               {/* Keyboard Cheat Sheet */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-center text-xs">
                 <div className="p-2.5 bg-slate-900/80 rounded-xl border border-slate-800">
                   <div className="text-slate-400">移動鍵</div>
                   <div className="font-mono font-bold text-sky-300 mt-1">WASD / 方向鍵</div>
+                </div>
+                <div className="p-2.5 bg-slate-900/80 rounded-xl border border-emerald-500/30">
+                  <div className="text-emerald-400 font-bold">上下運具 (加速)</div>
+                  <div className="font-mono font-bold text-emerald-300 mt-1">Z 鍵</div>
                 </div>
                 <div className="p-2.5 bg-slate-900/80 rounded-xl border border-slate-800">
                   <div className="text-slate-400">救援 / 送醫</div>
@@ -332,7 +336,7 @@ export const EmergencyTutorialModal: React.FC<EmergencyTutorialModalProps> = ({ 
                   <div className="font-mono font-bold text-amber-300 mt-1">1 2 3 4 5 鍵</div>
                 </div>
                 <div className="p-2.5 bg-slate-900/80 rounded-xl border border-slate-800">
-                  <div className="text-slate-400">急診看板 / 圖鑑</div>
+                  <div className="text-slate-400">急診 / 圖鑑</div>
                   <div className="font-mono font-bold text-rose-300 mt-1">H 鍵 / B 鍵</div>
                 </div>
               </div>

@@ -56,12 +56,19 @@ export const ControlGuideModal: React.FC<ControlGuideModalProps> = ({ onClose })
                     W A S D / ↑ ↓ ← →
                   </span>
                 </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-400">抱起小熊 / 送入急診：</span>
-                  <span className="font-mono bg-slate-900 px-2 py-0.5 rounded border border-slate-700 text-emerald-300">
-                    Space 空白鍵 / Enter
-                  </span>
-                </div>
+                <div className="flex items-center justify-between p-2 rounded-xl bg-slate-900/60 border border-slate-800">
+                <span className="text-slate-300">上下運具 / 步行切換</span>
+                <span className="font-mono bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2 py-0.5 rounded text-[11px] font-bold">
+                  Z 鍵 (在運具上加速 4~30x)
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between p-2 rounded-xl bg-slate-900/60 border border-slate-800">
+                <span className="text-slate-300">抱起救援 / 送入急診</span>
+                <span className="font-mono bg-slate-800 text-amber-300 border border-slate-700 px-2 py-0.5 rounded text-[11px] font-bold">
+                  Space 空白鍵 / Enter
+                </span>
+              </div>
                 <div className="flex items-center justify-between">
                   <span className="text-slate-400">切換交通模式：</span>
                   <span className="font-mono bg-slate-900 px-2 py-0.5 rounded border border-slate-700 text-amber-300">

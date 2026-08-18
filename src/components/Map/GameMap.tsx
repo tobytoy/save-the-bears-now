@@ -25,25 +25,39 @@ const MapFollowController: React.FC<{ playerPos: [number, number] }> = ({ player
 };
 
 // 1. 🐶 Player Marker: 柴犬急救隊長 (Shiba Doctor)
-function createPlayerIcon(mode: TransitMode, isCarryingBear: boolean): L.DivIcon {
-  const bgClass =
-    mode === 'METRO'
-      ? 'bg-sky-600 border-sky-300'
-      : mode === 'BUS'
-      ? 'bg-emerald-600 border-emerald-300'
-      : mode === 'BIKE'
-      ? 'bg-orange-500 border-orange-300'
-      : mode === 'THSR' || mode === 'TRA'
-      ? 'bg-purple-600 border-purple-300'
-      : 'bg-amber-600 border-amber-300';
+function createPlayerIcon(mode: TransitMode, isOnTransit: boolean, isCarryingBear: boolean): L.DivIcon {
+  const bgClass = !isOnTransit
+    ? 'bg-amber-700 border-amber-300'
+    : mode === 'METRO'
+    ? 'bg-sky-600 border-sky-300'
+    : mode === 'BUS'
+    ? 'bg-emerald-600 border-emerald-300'
+    : mode === 'BIKE'
+    ? 'bg-orange-500 border-orange-300'
+    : mode === 'THSR' || mode === 'TRA'
+    ? 'bg-purple-600 border-purple-300'
+    : 'bg-amber-600 border-amber-300';
 
-  const modeIcon =
-    mode === 'METRO' ? '🚇' : mode === 'BUS' ? '🚌' : mode === 'BIKE' ? '🚲' : mode === 'THSR' || mode === 'TRA' ? '🚄' : '🚶';
+  const modeIcon = !isOnTransit
+    ? '🚶'
+    : mode === 'METRO'
+    ? '🚇'
+    : mode === 'BUS'
+    ? '🚌'
+    : mode === 'BIKE'
+    ? '🚲'
+    : mode === 'THSR' || mode === 'TRA'
+    ? '🚄'
+    : '🚶';
+
+  const statusLabel = isOnTransit
+    ? `${modeIcon} 在運具上`
+    : '🚶 步行中 (Z 上車)';
 
   const html = `
     <div class="relative flex items-center justify-center -translate-x-1/2 -translate-y-1/2">
-      <!-- Player Radar Pulse Ring -->
-      <div class="absolute w-16 h-16 rounded-full bg-amber-400/30 animate-ping pointer-events-none"></div>
+      <!-- Player Radar Pulse Ring (Faster when on transit) -->
+      <div class="absolute ${isOnTransit ? 'w-16 h-16 bg-sky-400/40' : 'w-12 h-12 bg-amber-400/25'} rounded-full animate-ping pointer-events-none"></div>
       
       <!-- Player Avatar Core (🐶 柴犬隊長) -->
       <div class="relative w-12 h-12 rounded-2xl ${bgClass} border-2 border-white shadow-2xl flex items-center justify-center text-2xl transition-transform hover:scale-115">
@@ -62,9 +76,9 @@ function createPlayerIcon(mode: TransitMode, isCarryingBear: boolean): L.DivIcon
         }
       </div>
 
-      <!-- Player Nameplate -->
-      <div class="absolute -bottom-5 left-1/2 -translate-x-1/2 whitespace-nowrap bg-slate-950/90 border border-slate-700 px-2 py-0.2 rounded-full shadow text-[10px] font-black text-amber-300">
-        柴犬隊長 (你)
+      <!-- Player Nameplate with Transit Status -->
+      <div class="absolute -bottom-5 left-1/2 -translate-x-1/2 whitespace-nowrap bg-slate-950/95 border ${isOnTransit ? 'border-sky-500 text-sky-300' : 'border-slate-700 text-amber-300'} px-2 py-0.2 rounded-full shadow text-[10px] font-black">
+        柴犬隊長 · ${statusLabel}
       </div>
     </div>
   `;
@@ -420,7 +434,7 @@ export const GameMap: React.FC<GameMapProps> = ({
         {/* Player Marker: 🐶 柴犬隊長 */}
         <Marker
           position={[player.lat, player.lng]}
-          icon={createPlayerIcon(player.currentMode, Boolean(player.carryingBear))}
+          icon={createPlayerIcon(player.currentMode, player.isOnTransit, Boolean(player.carryingBear))}
           zIndexOffset={1000}
         />
       </MapContainer>

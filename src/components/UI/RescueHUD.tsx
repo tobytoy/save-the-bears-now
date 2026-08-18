@@ -1,5 +1,5 @@
 import React, { useMemo, useRef } from 'react';
-import { Navigation, Heart, Zap, ChevronLeft, ChevronRight, Compass } from 'lucide-react';
+import { Navigation, Heart, Zap, ChevronLeft, ChevronRight, Compass, Bike, Footprints } from 'lucide-react';
 import { Player, Bear, Hospital, TransitNetwork, TransitMode } from '../../types';
 import { calculateDistanceKm, formatDistance, estimateTravelTimeSec } from '../../utils/geo';
 import { VehicleIcon } from '../Assets/VehicleIcons';
@@ -12,6 +12,7 @@ interface RescueHUDProps {
   hospitals: Hospital[];
   transitNetwork: TransitNetwork | null;
   onMove: (lat: number, lng: number, stationName: string, mode: TransitMode) => void;
+  onToggleBoard: () => void;
   onPickupBear: (bear: Bear) => void;
   onDeliverBear: (hospital: Hospital) => void;
 }
@@ -22,6 +23,7 @@ export const RescueHUD: React.FC<RescueHUDProps> = ({
   hospitals,
   transitNetwork,
   onMove,
+  onToggleBoard,
   onPickupBear,
   onDeliverBear
 }) => {
@@ -172,10 +174,8 @@ export const RescueHUD: React.FC<RescueHUDProps> = ({
   // Fast Navigation to Bear or Hospital
   const handleFastRoute = () => {
     if (player.carryingBear && bestHospital) {
-      // Route to best hospital
       onMove(bestHospital.lat, bestHospital.lng, `${bestHospital.name} 急診門口`, 'METRO');
     } else if (closestBear) {
-      // Route to closest bear
       onMove(closestBear.lat, closestBear.lng, `${closestBear.locationName}`, 'BIKE');
     }
   };
@@ -245,8 +245,8 @@ export const RescueHUD: React.FC<RescueHUDProps> = ({
 
       {/* Main Control Console Card */}
       <div className="pointer-events-auto w-full max-w-5xl bg-slate-900/95 backdrop-blur-2xl border border-slate-700/80 rounded-3xl p-3 shadow-2xl text-slate-100 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
-        {/* Left: Player Status (🐶 柴犬隊長) & Carried Bear */}
-        <div className="flex items-center gap-3 min-w-[260px]">
+        {/* Left: Player Status (🐶 柴犬隊長) & Transit Boarding Toggle */}
+        <div className="flex items-center gap-3 min-w-[280px]">
           <div className="relative flex-shrink-0">
             <div className="w-12 h-12 rounded-2xl bg-amber-500/15 border border-amber-400/40 flex items-center justify-center shadow-inner">
               <ShibaMedic size={44} />
@@ -262,17 +262,27 @@ export const RescueHUD: React.FC<RescueHUDProps> = ({
             <div className="flex items-center gap-1.5">
               <span className="font-extrabold text-sm text-amber-300">🐶 柴犬隊長</span>
               <span className="text-slate-400">·</span>
-              <span className="text-xs text-slate-200 font-bold truncate max-w-[130px]">
-                {player.currentStationName || '台北車站'}
-              </span>
+              
+              {/* Transit Status Badge with 'Z' key hint */}
+              {player.isOnTransit ? (
+                <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/50 px-2 py-0.5 rounded-full font-bold flex items-center gap-1">
+                  <span>● 在運具上 ({player.currentMode === 'BIKE' ? 'YouBike' : player.currentMode === 'METRO' ? '捷運' : player.currentMode === 'BUS' ? '公車' : '高鐵'})</span>
+                </span>
+              ) : (
+                <span className="text-[10px] bg-slate-700/60 text-slate-300 border border-slate-600 px-2 py-0.5 rounded-full font-semibold flex items-center gap-1">
+                  <Footprints className="w-3 h-3 text-slate-400" />
+                  <span>步行中 (慢速)</span>
+                </span>
+              )}
+
               {player.isMoving && (
-                <span className="text-[10px] text-sky-300 bg-sky-500/20 px-2 py-0.5 rounded-full font-bold animate-pulse">
+                <span className="text-[10px] text-sky-300 bg-sky-500/20 px-1.5 py-0.5 rounded-full font-bold animate-pulse">
                   移動中
                 </span>
               )}
             </div>
 
-            {/* Carrying Bear Health Bar */}
+            {/* Carrying Bear Health Bar or Transit Toggle Hint */}
             {player.carryingBear ? (
               <div className="mt-1 space-y-1">
                 <div className="flex items-center justify-between text-[11px] font-bold">
@@ -297,36 +307,46 @@ export const RescueHUD: React.FC<RescueHUDProps> = ({
                 </div>
               </div>
             ) : (
-              <div className="flex items-center gap-2 mt-0.5">
-                <p className="text-xs text-slate-400 font-medium truncate">
-                  {activeBears.length > 0
-                    ? `地圖有 ${activeBears.length} 隻熊熊待援`
-                    : '🎉 當前區域小熊已全數救出！'}
-                </p>
-                {closestBear ? (
+              <div className="flex items-center gap-2 mt-1">
+                {/* [Z] Key Boarding Toggle Button */}
+                <button
+                  onClick={onToggleBoard}
+                  disabled={player.isMoving}
+                  className={`text-[11px] font-black px-2.5 py-1 rounded-xl border flex items-center gap-1.5 shadow-md transition-all active:scale-95 ${
+                    player.isOnTransit
+                      ? 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-400'
+                      : 'bg-amber-500 hover:bg-amber-400 text-slate-950 border-amber-300 animate-pulse'
+                  }`}
+                  title="按鍵盤 Z 鍵上下大眾交通工具"
+                >
+                  {player.isOnTransit ? <Bike className="w-3.5 h-3.5" /> : <VehicleIcon mode="BIKE" size={14} />}
+                  <span>{player.isOnTransit ? '下運具 (按 Z 鍵)' : '上運具加速 (按 Z 鍵)'}</span>
+                </button>
+
+                {closestBear && (
                   <button
                     onClick={handleFastRoute}
                     disabled={player.isMoving}
-                    className="text-[10px] bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 px-2 py-0.5 rounded-md font-bold transition-transform active:scale-95 flex items-center gap-1 flex-shrink-0"
+                    className="text-[10px] bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-500/40 px-2 py-1 rounded-lg font-bold transition-transform active:scale-95 flex items-center gap-1 flex-shrink-0"
                     title="自動前往最近受傷小熊"
                   >
-                    <Compass className="w-3 h-3 text-amber-400" />
+                    <Compass className="w-3 h-3 text-sky-400" />
                     <span>一鍵前往小熊</span>
                   </button>
-                ) : null}
+                )}
               </div>
             )}
           </div>
         </div>
 
-        {/* Right: Nearby Transit Boarding Selector with Scroll Arrows & No Clipping */}
+        {/* Right: Nearby Transit Boarding Selector with Scroll Controls */}
         <div className="flex-1 min-w-0 border-t md:border-t-0 md:border-l border-slate-800 pt-2 md:pt-0 md:pl-3 relative">
           <div className="text-[11px] font-bold text-slate-400 mb-1.5 flex items-center justify-between">
             <span className="flex items-center gap-1">
               <Navigation className="w-3.5 h-3.5 text-sky-400" />
-              <span>鄰近大眾交通站點 (點擊即可搭乘)</span>
+              <span>搭乘鄰近大眾交通 (直達該站點)</span>
             </span>
-            <span className="text-[10px] text-slate-500 hidden sm:inline">可左右滑動查看更多 ➔</span>
+            <span className="text-[10px] text-amber-300 font-semibold hidden sm:inline">💡 在運具上移動比步行快 4~30 倍！</span>
           </div>
 
           <div className="relative flex items-center">
@@ -334,7 +354,7 @@ export const RescueHUD: React.FC<RescueHUDProps> = ({
             <button
               onClick={scrollLeft}
               className="absolute -left-2 z-20 p-1.5 bg-slate-800/90 hover:bg-slate-700 text-slate-200 border border-slate-600 rounded-full shadow-lg transition-transform active:scale-90"
-              title="向左滾動"
+              title="向左滑動"
             >
               <ChevronLeft className="w-3.5 h-3.5" />
             </button>
@@ -376,7 +396,7 @@ export const RescueHUD: React.FC<RescueHUDProps> = ({
             <button
               onClick={scrollRight}
               className="absolute -right-2 z-20 p-1.5 bg-slate-800/90 hover:bg-slate-700 text-slate-200 border border-slate-600 rounded-full shadow-lg transition-transform active:scale-90"
-              title="向右滾動查看更多"
+              title="向右滑動查看更多"
             >
               <ChevronRight className="w-3.5 h-3.5" />
             </button>
