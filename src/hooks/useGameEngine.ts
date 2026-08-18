@@ -15,6 +15,53 @@ import { calculateDistanceKm, generatePathWaypoints } from '../utils/geo';
 import { sound } from '../utils/audio';
 import { fetchLiveEmergencyData } from '../services/emergencyService';
 
+// 多元真實地標事故熱點 (遍布雙北、新北各區、台中、高雄、宜蘭)
+const DIVERSE_SPAWN_LOCATIONS = [
+  // 台北核心與商圈
+  { name: '大安森林公園 音樂台旁', lat: 25.0325, lng: 121.5358 },
+  { name: '西門町 徒步區紅樓前', lat: 25.0423, lng: 121.5072 },
+  { name: '信義商圈 香堤大道廣場', lat: 25.0360, lng: 121.5668 },
+  { name: '士林夜市 慈诚宮廟前', lat: 25.0888, lng: 121.5245 },
+  { name: '圓山花博公園 爭艷館旁', lat: 25.0705, lng: 121.5225 },
+  { name: '象山步道 六巨石觀景台', lat: 25.0275, lng: 121.5742 },
+  { name: '公館商圈 台大校門口林蔭道', lat: 25.0175, lng: 121.5340 },
+  { name: '松山文創園區 生態池畔', lat: 25.0438, lng: 121.5605 },
+  { name: '內湖大湖公園 錦帶橋旁', lat: 25.0835, lng: 121.6025 },
+  { name: '美麗華百樂園 摩天輪廣場', lat: 25.0836, lng: 121.5574 },
+  { name: '北投溫泉博物館 步道旁', lat: 25.1365, lng: 121.5065 },
+  { name: '南港軟體園區 戶外草皮', lat: 25.0592, lng: 121.6155 },
+  
+  // 新北各區
+  { name: '板橋新板特區 萬坪都會公園', lat: 25.0125, lng: 121.4645 },
+  { name: '板橋府中 慈惠宮商圈巷弄', lat: 25.0088, lng: 121.4582 },
+  { name: '淡水老街 渡船頭河岸步道', lat: 25.1702, lng: 121.4395 },
+  { name: '淡水漁人碼頭 情人橋下', lat: 25.1830, lng: 121.4125 },
+  { name: '新店碧潭風景區 吊橋東岸', lat: 24.9565, lng: 121.5368 },
+  { name: '新莊體育園區 景觀湖畔', lat: 25.0410, lng: 121.4485 },
+  { name: '三重綜合體育館 廣場前', lat: 25.0625, lng: 121.4925 },
+  { name: '中和四號公園 國立圖書館前', lat: 25.0015, lng: 121.5125 },
+  { name: '土城桐花公園 登山步道口', lat: 24.9585, lng: 121.4485 },
+  
+  // 桃園、台中、高雄、宜蘭
+  { name: '桃園藝文廣場 綠地步道', lat: 25.0175, lng: 121.3015 },
+  { name: '台中秋紅谷景觀生態公園', lat: 24.1675, lng: 120.6395 },
+  { name: '台中勤美誠品 草悟道綠廊', lat: 24.1512, lng: 120.6635 },
+  { name: '高雄駁二藝術特區 大義倉庫', lat: 22.6195, lng: 120.2825 },
+  { name: '高雄愛河之心 水岸步道', lat: 22.6565, lng: 120.3065 },
+  { name: '宜蘭幾米主題廣場', lat: 24.7525, lng: 121.7575 }
+];
+
+const INITIAL_PLAYER_HUBS = [
+  { name: '台北車站 (三鐵共構)', lat: 25.0463, lng: 121.5175 },
+  { name: '西門町 (捷運站前)', lat: 25.0421, lng: 121.5083 },
+  { name: '市政府站 (信義核心)', lat: 25.0412, lng: 121.5651 },
+  { name: '板橋車站 (新板特區)', lat: 25.0136, lng: 121.4623 },
+  { name: '大安森林公園 (信義路)', lat: 25.0334, lng: 121.5352 },
+  { name: '中山站 (心中山線形公園)', lat: 25.0531, lng: 121.5204 },
+  { name: '大坪林站 (新店核心)', lat: 24.9829, lng: 121.5414 },
+  { name: '士林站 (士林官邸旁)', lat: 25.0936, lng: 121.5262 }
+];
+
 const BEAR_STORIES: { type: BearInjuryType; name: string; story: string; avatar: string }[] = [
   {
     type: 'FRACTURE',
@@ -54,7 +101,7 @@ export function useGameEngine() {
   const [transitNetwork, setTransitNetwork] = useState<TransitNetwork | null>(null);
   const [activeBears, setActiveBears] = useState<Bear[]>([]);
   const [player, setPlayer] = useState<Player>({
-    lat: 25.0463, // 台北車站
+    lat: 25.0463,
     lng: 121.5175,
     currentStationName: '台北車站',
     currentMode: 'METRO',
@@ -119,9 +166,9 @@ export function useGameEngine() {
     return () => clearInterval(interval);
   }, [hospitals]);
 
-  // 2. Spawn Bear Helper
+  // 2. High-Randomness Spawn Bear Helper
   const spawnBear = useCallback(
-    (customCoord?: [number, number]) => {
+    (customCoord?: [number, number], customLocName?: string) => {
       let lat = 25.042;
       let lng = 121.52;
       let locName = '市區某處';
@@ -129,20 +176,22 @@ export function useGameEngine() {
       if (customCoord) {
         lat = customCoord[0];
         lng = customCoord[1];
-      } else if (transitNetwork && transitNetwork.youbike.length > 0) {
-        // Pick near a random youbike or metro station
-        const randStation =
-          transitNetwork.youbike[Math.floor(Math.random() * transitNetwork.youbike.length)];
-        const offsetLat = (Math.random() - 0.5) * 0.008;
-        const offsetLng = (Math.random() - 0.5) * 0.008;
-        lat = randStation.lat + offsetLat;
-        lng = randStation.lng + offsetLng;
-        locName = randStation.name.replace('YouBike ', '') + ' 附近巷弄';
+        locName = customLocName || '指定搜救區域';
+      } else {
+        // Randomly pick a spot from diverse realistic locations
+        const pickedLocation =
+          DIVERSE_SPAWN_LOCATIONS[Math.floor(Math.random() * DIVERSE_SPAWN_LOCATIONS.length)];
+        // Add subtle micro random jitter (+/- 300m)
+        const jitterLat = (Math.random() - 0.5) * 0.005;
+        const jitterLng = (Math.random() - 0.5) * 0.005;
+        lat = pickedLocation.lat + jitterLat;
+        lng = pickedLocation.lng + jitterLng;
+        locName = pickedLocation.name;
       }
 
       const template = BEAR_STORIES[Math.floor(Math.random() * BEAR_STORIES.length)];
       const newBear: Bear = {
-        id: 'bear_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
+        id: 'bear_' + Date.now() + '_' + Math.floor(Math.random() * 10000),
         name: template.name,
         type: template.type,
         story: template.story,
@@ -152,7 +201,7 @@ export function useGameEngine() {
         maxHealth: 100,
         currentHealth: 100,
         urgency: template.type === 'HEATSTROKE' ? 'HIGH' : 'MEDIUM',
-        decayRate: template.type === 'HEATSTROKE' ? 1.2 : 0.8,
+        decayRate: template.type === 'HEATSTROKE' ? 1.0 : 0.6,
         rewardScore: 1000,
         isRescued: false,
         spawnTime: Date.now(),
@@ -160,11 +209,25 @@ export function useGameEngine() {
       };
 
       setActiveBears((prev) => [...prev, newBear]);
+      return newBear;
     },
-    [transitNetwork]
+    []
   );
 
-  // 3. Start Game
+  // 3. Batch Spawn Emergency Bears (+N Bears)
+  const spawnBatchBears = useCallback(
+    (count = 3) => {
+      sound.playPickup();
+      for (let i = 0; i < count; i++) {
+        setTimeout(() => {
+          spawnBear();
+        }, i * 150);
+      }
+    },
+    [spawnBear]
+  );
+
+  // 4. Start Game with High Randomness (Random starting hub + 3 widely distributed bears)
   const startGame = useCallback(() => {
     setGameState('PLAYING');
     setStats({
@@ -175,15 +238,33 @@ export function useGameEngine() {
       totalDistanceKm: 0,
       gameTimeSec: 0
     });
-    // Spawn 2 initial bears
+
+    // Randomize player starting hub
+    const startHub = INITIAL_PLAYER_HUBS[Math.floor(Math.random() * INITIAL_PLAYER_HUBS.length)];
+    setPlayer({
+      lat: startHub.lat,
+      lng: startHub.lng,
+      currentStationName: startHub.name,
+      currentMode: 'METRO',
+      isMoving: false,
+      carryingBear: null,
+      targetCoord: null,
+      path: [],
+      currentPathIndex: 0
+    });
+
+    // Clear and spawn 3 bears across completely random distinct locations
     setActiveBears([]);
     setTimeout(() => {
-      spawnBear([25.037, 121.535]); // Near Daan Forest Park
-      spawnBear([25.042, 121.508]); // Near Ximen
-    }, 500);
+      // Pick 3 non-duplicate random locations
+      const shuffled = [...DIVERSE_SPAWN_LOCATIONS].sort(() => 0.5 - Math.random());
+      for (let i = 0; i < 3; i++) {
+        spawnBear([shuffled[i].lat, shuffled[i].lng], shuffled[i].name);
+      }
+    }, 400);
   }, [spawnBear]);
 
-  // 4. Main Game Loop (Health decay, game clock)
+  // 5. Main Game Loop (Health decay, game clock)
   useEffect(() => {
     if (gameState !== 'PLAYING') return;
 
@@ -199,7 +280,6 @@ export function useGameEngine() {
           })
           .filter((b) => {
             if (b.currentHealth <= 0 && !b.isRescued) {
-              // Bear expired
               setStats((s) => ({ ...s, bearsLost: s.bearsLost + 1 }));
               sound.playWarning();
               return false;
@@ -229,14 +309,18 @@ export function useGameEngine() {
     return () => clearInterval(timer);
   }, [gameState]);
 
-  // Auto-spawn bear if count is low
+  // 6. Auto-replenish bears if all are rescued (Always keep at least 2 active bears)
   useEffect(() => {
     if (gameState === 'PLAYING' && activeBears.length === 0 && !player.carryingBear) {
-      spawnBear();
+      const timer = setTimeout(() => {
+        spawnBear();
+        spawnBear();
+      }, 1000);
+      return () => clearTimeout(timer);
     }
   }, [gameState, activeBears.length, player.carryingBear, spawnBear]);
 
-  // 5. Player Movement Physics (Smooth Transit Interpolation)
+  // 7. Player Movement Physics (Smooth Transit Interpolation)
   const moveToLocation = useCallback(
     (targetLat: number, targetLng: number, stationName: string, mode: TransitMode) => {
       if (player.isMoving) return;
@@ -303,7 +387,7 @@ export function useGameEngine() {
     [player, transitNetwork]
   );
 
-  // 6. Action: Directional Step (WASD / Arrow Keys / D-Pad)
+  // 8. Action: Directional Step (WASD / Arrow Keys / D-Pad)
   const moveByDirection = useCallback(
     (dir: 'UP' | 'DOWN' | 'LEFT' | 'RIGHT') => {
       if (player.isMoving) return;
@@ -322,13 +406,13 @@ export function useGameEngine() {
     [player, moveToLocation]
   );
 
-  // 7. Action: Pickup Bear
+  // 9. Action: Pickup Bear
   const pickupBear = useCallback(
     (bear: Bear) => {
       if (player.carryingBear || player.isMoving) return;
       const dist = calculateDistanceKm(player.lat, player.lng, bear.lat, bear.lng);
       if (dist > 0.8) {
-        alert('距離小熊太遠了！請先搭乘大眾運輸工具接近小熊所在位置。');
+        alert(`距離「${bear.name}」太遠（約 ${Math.round(dist * 1000)} 公尺）！請先點擊鄰近捷運/YouBike站搭車前往。`);
         return;
       }
 
@@ -341,14 +425,14 @@ export function useGameEngine() {
     [player]
   );
 
-  // 8. Action: Deliver Bear to Hospital ER
+  // 10. Action: Deliver Bear to Hospital ER
   const deliverBearToHospital = useCallback(
     (hospital: Hospital) => {
       if (!player.carryingBear || player.isMoving) return;
 
       const dist = calculateDistanceKm(player.lat, player.lng, hospital.lat, hospital.lng);
       if (dist > 0.8) {
-        alert(`距離 ${hospital.shortName} 太遠！請先搭乘捷運或公車抵達醫院附近。`);
+        alert(`距離「${hospital.shortName}」還有 ${Math.round(dist * 1000)} 公尺！請先搭車至醫院門口。`);
         return;
       }
 
@@ -400,18 +484,13 @@ export function useGameEngine() {
       setRescueHistory((prev) => [historyRecord, ...prev]);
       setPlayer((p) => ({ ...p, carryingBear: null }));
       setGameState('SETTLEMENT');
-
-      setTimeout(() => {
-        spawnBear();
-      }, 1000);
     },
-    [player, missionStartTime, usedModesInCurrentMission, spawnBear]
+    [player, missionStartTime, usedModesInCurrentMission]
   );
 
-  // 9. Quick Action for Spacebar / Enter
+  // 11. Quick Action for Spacebar / Enter
   const handleQuickAction = useCallback(() => {
     if (player.carryingBear) {
-      // Find closest hospital within 0.8km
       const nearHosp = hospitals.find(
         (h) => calculateDistanceKm(player.lat, player.lng, h.lat, h.lng) <= 0.8
       );
@@ -419,7 +498,6 @@ export function useGameEngine() {
         deliverBearToHospital(nearHosp);
       }
     } else {
-      // Find closest bear within 0.8km
       const nearBear = activeBears.find(
         (b) => calculateDistanceKm(player.lat, player.lng, b.lat, b.lng) <= 0.8
       );
@@ -429,12 +507,11 @@ export function useGameEngine() {
     }
   }, [player, hospitals, activeBears, deliverBearToHospital, pickupBear]);
 
-  // 10. Global Keyboard Controller
+  // 12. Global Keyboard Controller
   useEffect(() => {
     if (gameState !== 'PLAYING') return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Prevent scrolling when using arrow keys or space
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) {
         e.preventDefault();
       }
@@ -498,6 +575,7 @@ export function useGameEngine() {
     setSelectedHospital,
     startGame,
     spawnBear,
+    spawnBatchBears,
     moveToLocation,
     moveByDirection,
     handleQuickAction,

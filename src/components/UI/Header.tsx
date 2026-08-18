@@ -1,5 +1,5 @@
 import React from 'react';
-import { Volume2, VolumeX, Layers, BookOpen, Activity, HelpCircle } from 'lucide-react';
+import { Volume2, VolumeX, Layers, BookOpen, Activity, HelpCircle, Radio } from 'lucide-react';
 import { GameStats } from '../../types';
 import { sound } from '../../utils/audio';
 import { MAP_LAYERS, MapTileLayer } from '../Map/TileLayers';
@@ -11,6 +11,8 @@ interface HeaderProps {
   onOpenDex: () => void;
   onOpenHospitalList: () => void;
   onOpenTutorial: () => void;
+  onSpawnBears: () => void;
+  activeBearCount: number;
   lastUpdated: string;
   isSoundEnabled: boolean;
   onToggleSound: () => void;
@@ -23,6 +25,8 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenDex,
   onOpenHospitalList,
   onOpenTutorial,
+  onSpawnBears,
+  activeBearCount,
   lastUpdated,
   isSoundEnabled,
   onToggleSound
@@ -49,7 +53,8 @@ export const Header: React.FC<HeaderProps> = ({
           <p className="text-[11px] text-slate-400 font-medium flex items-center gap-1.5">
             <span className="text-emerald-400 font-semibold">● 柴犬隊長出勤中</span>
             <span>|</span>
-            <span>健保即時 {lastUpdated || '已同步'}</span>
+            <span>待救: {activeBearCount} 隻</span>
+            <span className="hidden sm:inline">| 健保 {lastUpdated || '已連線'}</span>
           </p>
         </div>
       </div>
@@ -77,14 +82,24 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Right Control Actions */}
       <div className="pointer-events-auto flex items-center gap-2">
-        {/* Real Emergency Simulation & How to Play Tutorial */}
+        {/* Summon More Bears Button */}
+        <button
+          onClick={onSpawnBears}
+          className="flex items-center gap-1.5 bg-gradient-to-r from-rose-600 to-amber-600 hover:from-rose-500 hover:to-amber-500 text-white font-black border border-rose-400/60 backdrop-blur-md px-3.5 py-2.5 rounded-2xl text-xs shadow-xl transition-all duration-200 hover:scale-105 active:scale-95 animate-pulse"
+          title="發射搜救雷達，隨機呼叫 3 隻受傷小熊"
+        >
+          <Radio className="w-4 h-4 text-amber-200" />
+          <span>呼叫小熊 (+3)</span>
+        </button>
+
+        {/* How to Play Tutorial */}
         <button
           onClick={onOpenTutorial}
           className="flex items-center gap-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/50 backdrop-blur-md px-3.5 py-2.5 rounded-2xl text-xs font-black shadow-xl transition-all duration-200 hover:scale-105 active:scale-95"
           title="查看真實應急模擬與玩法教學"
         >
           <HelpCircle className="w-4 h-4 text-amber-400" />
-          <span>應急教學</span>
+          <span className="hidden sm:inline">應急教學</span>
         </button>
 
         {/* Hospital Dashboard Trigger */}
@@ -102,7 +117,7 @@ export const Header: React.FC<HeaderProps> = ({
           className="flex items-center gap-1.5 bg-slate-900/85 hover:bg-slate-800 text-slate-200 border border-slate-700 backdrop-blur-md px-3.5 py-2.5 rounded-2xl text-xs font-bold shadow-xl transition-all duration-200 hover:scale-105 active:scale-95"
         >
           <BookOpen className="w-4 h-4 text-amber-400" />
-          <span className="hidden sm:inline">熊熊圖鑑</span>
+          <span className="hidden md:inline">圖鑑</span>
         </button>
 
         {/* Map Layer Switcher */}

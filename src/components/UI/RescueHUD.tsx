@@ -301,9 +301,9 @@ export const RescueHUD: React.FC<RescueHUDProps> = ({
                 <p className="text-xs text-slate-400 font-medium truncate">
                   {activeBears.length > 0
                     ? `地圖有 ${activeBears.length} 隻熊熊待援`
-                    : '搜救雷達掃描中...'}
+                    : '🎉 當前區域小熊已全數救出！'}
                 </p>
-                {closestBear && (
+                {closestBear ? (
                   <button
                     onClick={handleFastRoute}
                     disabled={player.isMoving}
@@ -313,7 +313,7 @@ export const RescueHUD: React.FC<RescueHUDProps> = ({
                     <Compass className="w-3 h-3 text-amber-400" />
                     <span>一鍵前往小熊</span>
                   </button>
-                )}
+                ) : null}
               </div>
             )}
           </div>

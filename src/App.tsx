@@ -26,6 +26,7 @@ export function App() {
     lastUpdatedTime,
     setSelectedHospital,
     startGame,
+    spawnBatchBears,
     moveToLocation,
     moveByDirection,
     handleQuickAction,
@@ -55,6 +56,8 @@ export function App() {
         onOpenDex={() => setShowDex(true)}
         onOpenHospitalList={() => setShowHospitalList(true)}
         onOpenTutorial={() => setShowTutorial(true)}
+        onSpawnBears={() => spawnBatchBears(3)}
+        activeBearCount={activeBears.length}
         lastUpdated={lastUpdatedTime}
         isSoundEnabled={isSoundEnabled}
         onToggleSound={() => setIsSoundEnabled(!isSoundEnabled)}
