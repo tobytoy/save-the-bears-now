@@ -53,6 +53,60 @@ const SPEED_CONFIG: Record<TransitMode, number> = {
   THSR: 220.0
 };
 
+// ─── 快速二元最小堆積 (Binary Min-Heap for A* Priority Queue) ───────────────
+// 移至模組頂層，避免每次呼叫 findMultiModalRoute 時重新定義 class
+class MinPriorityQueue<T> {
+  private heap: { element: T; priority: number }[] = [];
+
+  push(element: T, priority: number) {
+    this.heap.push({ element, priority });
+    this.bubbleUp(this.heap.length - 1);
+  }
+
+  pop(): T | undefined {
+    if (this.heap.length === 0) return undefined;
+    const top = this.heap[0].element;
+    const bottom = this.heap.pop()!;
+    if (this.heap.length > 0) {
+      this.heap[0] = bottom;
+      this.sinkDown(0);
+    }
+    return top;
+  }
+
+  get size(): number {
+    return this.heap.length;
+  }
+
+  private bubbleUp(index: number) {
+    while (index > 0) {
+      const parentIdx = Math.floor((index - 1) / 2);
+      if (this.heap[index].priority >= this.heap[parentIdx].priority) break;
+      [this.heap[index], this.heap[parentIdx]] = [this.heap[parentIdx], this.heap[index]];
+      index = parentIdx;
+    }
+  }
+
+  private sinkDown(index: number) {
+    const length = this.heap.length;
+    while (true) {
+      let leftChildIdx = 2 * index + 1;
+      let rightChildIdx = 2 * index + 2;
+      let smallestIdx = index;
+
+      if (leftChildIdx < length && this.heap[leftChildIdx].priority < this.heap[smallestIdx].priority) {
+        smallestIdx = leftChildIdx;
+      }
+      if (rightChildIdx < length && this.heap[rightChildIdx].priority < this.heap[smallestIdx].priority) {
+        smallestIdx = rightChildIdx;
+      }
+      if (smallestIdx === index) break;
+      [this.heap[index], this.heap[smallestIdx]] = [this.heap[smallestIdx], this.heap[index]];
+      index = smallestIdx;
+    }
+  }
+}
+
 // ─── 模組層級圖快取 ─────────────────────────────────────────────────────────
 // buildTransitGraph 的 O(n²) 換乘邊很耗 CPU，每次 WASD 導航不該重建
 // 快取直到 transitNetwork 路線數量有變動才重建
@@ -238,58 +292,6 @@ export function findMultiModalRoute(
     }
   });
 
-// ─── 快速二元最小堆積 (Binary Min-Heap for A* Priority Queue) ───────────────
-class MinPriorityQueue<T> {
-  private heap: { element: T; priority: number }[] = [];
-
-  push(element: T, priority: number) {
-    this.heap.push({ element, priority });
-    this.bubbleUp(this.heap.length - 1);
-  }
-
-  pop(): T | undefined {
-    if (this.heap.length === 0) return undefined;
-    const top = this.heap[0].element;
-    const bottom = this.heap.pop()!;
-    if (this.heap.length > 0) {
-      this.heap[0] = bottom;
-      this.sinkDown(0);
-    }
-    return top;
-  }
-
-  get size(): number {
-    return this.heap.length;
-  }
-
-  private bubbleUp(index: number) {
-    while (index > 0) {
-      const parentIdx = Math.floor((index - 1) / 2);
-      if (this.heap[index].priority >= this.heap[parentIdx].priority) break;
-      [this.heap[index], this.heap[parentIdx]] = [this.heap[parentIdx], this.heap[index]];
-      index = parentIdx;
-    }
-  }
-
-  private sinkDown(index: number) {
-    const length = this.heap.length;
-    while (true) {
-      let leftChildIdx = 2 * index + 1;
-      let rightChildIdx = 2 * index + 2;
-      let smallestIdx = index;
-
-      if (leftChildIdx < length && this.heap[leftChildIdx].priority < this.heap[smallestIdx].priority) {
-        smallestIdx = leftChildIdx;
-      }
-      if (rightChildIdx < length && this.heap[rightChildIdx].priority < this.heap[smallestIdx].priority) {
-        smallestIdx = rightChildIdx;
-      }
-      if (smallestIdx === index) break;
-      [this.heap[index], this.heap[smallestIdx]] = [this.heap[smallestIdx], this.heap[index]];
-      index = smallestIdx;
-    }
-  }
-}
 
   // ─── A* Search (O(log n) Priority Queue) ──────────────────────────────────
   const gScore = new Map<string, number>();

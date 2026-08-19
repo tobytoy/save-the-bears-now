@@ -233,13 +233,8 @@ export async function geocodeTaiwanAddress(
     }
   }
 
-  // 5. 若全數未查到，以台北士林/天母為預設或返回 null
-  return {
-    lat: 25.1159,
-    lng: 121.5300,
-    displayName: `${query} (士林/天母區域)`,
-    matchedStationName: '鄰近大眾交通站點'
-  };
+  // 5. 所有方式都查不到時回傳 null，讓 UI 層顯示明確的錯誤訊息
+  return null;
 }
 
 /**

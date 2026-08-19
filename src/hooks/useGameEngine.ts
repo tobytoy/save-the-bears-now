@@ -4,17 +4,20 @@ import {
   Bear,
   Player,
   Hospital,
-  TransitNetwork,
-  TransitMode,
   GameStats,
   GameState,
   RescueHistory,
-  BearInjuryType
+  BearInjuryType,
+  TransitMode
 } from '../types';
 import { calculateDistanceKm, generatePathWaypoints } from '../utils/geo';
 import { findMultiModalRoute } from '../utils/pathfinding';
 import { sound } from '../utils/audio';
-import { fetchLiveEmergencyData } from '../services/emergencyService';
+import { useDataLoader } from './useDataLoader';
+import { useToast } from './useToast';
+
+// ─── 模組層級小熊 ID 計數器（單調遞增，杜絕 Date.now() 碰撞）───────────────
+let _bearCounter = 0;
 
 // 多元真實地標事故熱點 (遍布雙北、新北各區、台中、高雄、宜蘭)
 const DIVERSE_SPAWN_LOCATIONS = [
@@ -31,7 +34,7 @@ const DIVERSE_SPAWN_LOCATIONS = [
   { name: '美麗華百樂園 摩天輪廣場', lat: 25.0836, lng: 121.5574 },
   { name: '北投溫泉博物館 步道旁', lat: 25.1365, lng: 121.5065 },
   { name: '南港軟體園區 戶外草皮', lat: 25.0592, lng: 121.6155 },
-  
+
   // 新北各區
   { name: '板橋新板特區 萬坪都會公園', lat: 25.0125, lng: 121.4645 },
   { name: '板橋府中 慈惠宮商圈巷弄', lat: 25.0088, lng: 121.4582 },
@@ -42,7 +45,7 @@ const DIVERSE_SPAWN_LOCATIONS = [
   { name: '三重綜合體育館 廣場前', lat: 25.0625, lng: 121.4925 },
   { name: '中和四號公園 國立圖書館前', lat: 25.0015, lng: 121.5125 },
   { name: '土城桐花公園 登山步道口', lat: 24.9585, lng: 121.4485 },
-  
+
   // 桃園、台中、高雄、宜蘭
   { name: '桃園藝文廣場 綠地步道', lat: 25.0175, lng: 121.3015 },
   { name: '台中秋紅谷景觀生態公園', lat: 24.1675, lng: 120.6395 },
@@ -96,27 +99,33 @@ const BEAR_STORIES: { type: BearInjuryType; name: string; story: string; avatar:
   }
 ];
 
-export function useGameEngine() {
-  const [gameState, setGameState] = useState<GameState>('INTRO');
-  const [hospitals, setHospitals] = useState<Hospital[]>([]);
-  const [transitNetwork, setTransitNetwork] = useState<TransitNetwork | null>(null);
-  const [activeBears, setActiveBears] = useState<Bear[]>([]);
-  const [player, setPlayer] = useState<Player>({
-    lat: 25.0463,
-    lng: 121.5175,
-    currentStationName: '台北車站',
-    currentMode: 'WALK',
-    isOnTransit: false,
-    boardedVehicleName: undefined,
-    isMoving: false,
-    carryingBear: null,
-    targetCoord: null,
-    path: [],
-    currentPathIndex: 0,
-    activeRouteSummary: undefined,
-    plannedWaypoints: []
-  });
+const INITIAL_PLAYER: Player = {
+  lat: 25.0463,
+  lng: 121.5175,
+  currentStationName: '台北車站',
+  currentMode: 'WALK',
+  isOnTransit: false,
+  boardedVehicleName: undefined,
+  isMoving: false,
+  carryingBear: null,
+  targetCoord: null,
+  path: [],
+  currentPathIndex: 0,
+  activeRouteSummary: undefined,
+  plannedWaypoints: []
+};
 
+export function useGameEngine() {
+  // ─── 資料載入（抽離至專用 hook）───────────────────────────────────────────
+  const { hospitals, transitNetwork, lastUpdatedTime } = useDataLoader();
+
+  // ─── Toast 通知系統（取代阻塞式 alert）──────────────────────────────────
+  const { toasts, showToast, dismissToast } = useToast();
+
+  // ─── 遊戲狀態 ────────────────────────────────────────────────────────────
+  const [gameState, setGameState] = useState<GameState>('INTRO');
+  const [activeBears, setActiveBears] = useState<Bear[]>([]);
+  const [player, setPlayer] = useState<Player>(INITIAL_PLAYER);
   const [stats, setStats] = useState<GameStats>({
     score: 0,
     bearsSaved: 0,
@@ -125,58 +134,22 @@ export function useGameEngine() {
     totalDistanceKm: 0,
     gameTimeSec: 0
   });
-
   const [lastSettlement, setLastSettlement] = useState<RescueHistory | null>(null);
   const [rescueHistory, setRescueHistory] = useState<RescueHistory[]>([]);
   const [usedModesInCurrentMission, setUsedModesInCurrentMission] = useState<TransitMode[]>([]);
   const [missionStartTime, setMissionStartTime] = useState<number>(0);
-  const [lastUpdatedTime, setLastUpdatedTime] = useState<string>('');
   const [selectedHospital, setSelectedHospital] = useState<Hospital | null>(null);
 
   const moveTimerRef = useRef<number | null>(null);
 
-  // 1. Initial Load of Datasets
-  useEffect(() => {
-    async function loadData() {
-      try {
-        const [hospRes, transitRes] = await Promise.all([
-          fetch('./data/hospitals.json'),
-          fetch('./data/transit_network.json')
-        ]);
-        const hospJson: Hospital[] = await hospRes.json();
-        const transitJson: TransitNetwork = await transitRes.json();
+  // Refs 讓 setInterval callback 能讀到最新 state 而不需要重建 interval
+  const activeBearRef = useRef<Bear[]>([]);
+  useEffect(() => { activeBearRef.current = activeBears; }, [activeBears]);
 
-        setTransitNetwork(transitJson);
+  const playerRef = useRef<Player>(INITIAL_PLAYER);
+  useEffect(() => { playerRef.current = player; }, [player]);
 
-        // Fetch live NHI emergency status
-        const enrichedHospitals = await fetchLiveEmergencyData(hospJson);
-        setHospitals(enrichedHospitals);
-        setLastUpdatedTime(new Date().toLocaleTimeString());
-      } catch (err) {
-        console.error('Failed to load initial game data:', err);
-      }
-    }
-    loadData();
-  }, []);
-
-  // Periodic Refresh for Hospital Data (every 30 minutes / 30 分鐘才會打一次)
-  const hospitalsRef = useRef<Hospital[]>([]);
-  useEffect(() => {
-    hospitalsRef.current = hospitals;
-  }, [hospitals]);
-
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      if (hospitalsRef.current.length > 0) {
-        const refreshed = await fetchLiveEmergencyData(hospitalsRef.current);
-        setHospitals(refreshed);
-        setLastUpdatedTime(new Date().toLocaleTimeString());
-      }
-    }, 30 * 60 * 1000); // 30 分鐘間隔
-    return () => clearInterval(interval);
-  }, []); // ← 空依賴：interval 只建立一次，每 30 分鐘執行一次
-
-  // 2. High-Randomness Spawn Bear Helper
+  // ─── 2. High-Randomness Spawn Bear Helper ────────────────────────────────
   const spawnBear = useCallback(
     (customCoord?: [number, number], customLocName?: string) => {
       let lat = 25.042;
@@ -198,8 +171,9 @@ export function useGameEngine() {
       }
 
       const template = BEAR_STORIES[Math.floor(Math.random() * BEAR_STORIES.length)];
+      // Fix #3: 使用模組層級計數器，避免 Date.now() 在快速生成時碰撞
       const newBear: Bear = {
-        id: 'bear_' + Date.now() + '_' + Math.floor(Math.random() * 10000),
+        id: `bear_${Date.now()}_${++_bearCounter}`,
         name: template.name,
         type: template.type,
         story: template.story,
@@ -222,20 +196,18 @@ export function useGameEngine() {
     []
   );
 
-  // 3. Batch Spawn Emergency Bears (+N Bears)
+  // ─── 3. Batch Spawn Emergency Bears (+N Bears) ────────────────────────────
   const spawnBatchBears = useCallback(
     (count = 3) => {
       sound.playPickup();
       for (let i = 0; i < count; i++) {
-        setTimeout(() => {
-          spawnBear();
-        }, i * 150);
+        setTimeout(() => { spawnBear(); }, i * 150);
       }
     },
     [spawnBear]
   );
 
-  // 4. Start Game (支援隨機開始 vs 自訂地址/地標出發)
+  // ─── 4. Start Game ────────────────────────────────────────────────────────
   const startGame = useCallback((options?: {
     mode: 'RANDOM' | 'CUSTOM';
     customCoord?: [number, number];
@@ -268,29 +240,19 @@ export function useGameEngine() {
     }
 
     setPlayer({
+      ...INITIAL_PLAYER,
       lat: startLat,
       lng: startLng,
-      currentStationName: startName,
-      currentMode: 'WALK',
-      isOnTransit: false,
-      boardedVehicleName: undefined,
-      isMoving: false,
-      carryingBear: null,
-      targetCoord: null,
-      path: [],
-      currentPathIndex: 0,
-      activeRouteSummary: undefined,
-      plannedWaypoints: []
+      currentStationName: startName
     });
 
     setActiveBears([]);
     setTimeout(() => {
       if (options?.mode === 'CUSTOM' && options.customCoord) {
-        // 在使用者指定出發點周邊 0.8km ~ 2.5km 半徑生成 3 隻待救小熊
         const angles = [0.2, 2.3, 4.4];
         for (let i = 0; i < 3; i++) {
           const angle = angles[i] + (Math.random() - 0.5) * 0.5;
-          const radius = 0.008 + Math.random() * 0.012; // 約 0.9km ~ 2.2km
+          const radius = 0.008 + Math.random() * 0.012;
           const bLat = startLat + Math.sin(angle) * radius;
           const bLng = startLng + Math.cos(angle) * radius;
           spawnBear([bLat, bLng], `${startName} 附近巷弄 (${i + 1}號待援點)`);
@@ -304,50 +266,56 @@ export function useGameEngine() {
     }, 400);
   }, [spawnBear]);
 
-  // 5. Main Game Loop (Health decay, game clock)
+  // ─── 5. Main Game Loop（Fix #2：不在 state updater 內產生 side effect）──
   useEffect(() => {
     if (gameState !== 'PLAYING') return;
 
     const timer = setInterval(() => {
+      // 更新遊戲計時
       setStats((prev) => ({ ...prev, gameTimeSec: prev.gameTimeSec + 1 }));
 
-      setActiveBears((prevBears) =>
-        prevBears
-          .map((b) => {
-            const newHealth = Math.max(0, b.currentHealth - b.decayRate);
-            return { ...b, currentHealth: newHealth };
-          })
-          .filter((b) => {
-            if (b.currentHealth <= 0 && !b.isRescued) {
-              setStats((s) => ({ ...s, bearsLost: s.bearsLost + 1 }));
-              sound.playWarning();
-              return false;
-            }
-            return true;
-          })
-      );
+      // 計算本輪哪些熊死亡（使用 ref 讀取最新 bears，不在 updater 內 setState）
+      const currentBears = activeBearRef.current;
+      const updatedBears = currentBears.map((b) => ({
+        ...b,
+        currentHealth: Math.max(0, b.currentHealth - b.decayRate)
+      }));
+      const dyingBears = updatedBears.filter((b) => b.currentHealth <= 0 && !b.isRescued);
+      const aliveBears = updatedBears.filter((b) => b.currentHealth > 0 || b.isRescued);
 
-      setPlayer((p) => {
-        if (p.carryingBear) {
-          const updatedHealth = Math.max(0, p.carryingBear.currentHealth - p.carryingBear.decayRate);
-          if (updatedHealth <= 0) {
-            sound.playWarning();
-            setStats((s) => ({ ...s, bearsLost: s.bearsLost + 1 }));
-            return { ...p, carryingBear: null };
-          }
-          return {
+      setActiveBears(aliveBears);
+
+      if (dyingBears.length > 0) {
+        setStats((s) => ({ ...s, bearsLost: s.bearsLost + dyingBears.length }));
+        sound.playWarning();
+      }
+
+      // 更新玩家攜帶中的小熊 HP（同樣不在 updater 裡呼叫其他 setState）
+      const currentPlayer = playerRef.current;
+      if (currentPlayer.carryingBear) {
+        const updatedHealth = Math.max(
+          0,
+          currentPlayer.carryingBear.currentHealth - currentPlayer.carryingBear.decayRate
+        );
+        if (updatedHealth <= 0) {
+          sound.playWarning();
+          setStats((s) => ({ ...s, bearsLost: s.bearsLost + 1 }));
+          setPlayer((p) => ({ ...p, carryingBear: null }));
+        } else {
+          setPlayer((p) => ({
             ...p,
-            carryingBear: { ...p.carryingBear, currentHealth: updatedHealth }
-          };
+            carryingBear: p.carryingBear
+              ? { ...p.carryingBear, currentHealth: updatedHealth }
+              : null
+          }));
         }
-        return p;
-      });
+      }
     }, 1000);
 
     return () => clearInterval(timer);
   }, [gameState]);
 
-  // 6. Auto-replenish bears if all are rescued
+  // ─── 6. Auto-replenish bears if all are rescued ───────────────────────────
   useEffect(() => {
     if (gameState === 'PLAYING' && activeBears.length === 0 && !player.carryingBear) {
       const timer = setTimeout(() => {
@@ -358,8 +326,7 @@ export function useGameEngine() {
     }
   }, [gameState, activeBears.length, player.carryingBear, spawnBear]);
 
-  // 7. A* Multi-Modal Transit Path Execution Engine
-  // 嚴格沿著大眾運具實體路線與軌道站點平滑移動
+  // ─── 7. A* Multi-Modal Transit Path Execution Engine ─────────────────────
   const executePathRoute = useCallback(
     (targetLat: number, targetLng: number, targetName: string, explicitMode?: TransitMode) => {
       if (player.isMoving) return;
@@ -372,7 +339,6 @@ export function useGameEngine() {
       let primaryMode: TransitMode = explicitMode || player.currentMode;
 
       if (transitNetwork) {
-        // 使用 Multi-modal A* 計算真實大眾運輸路線 (含步行接駁 ➔ 捷運軌道 ➔ 公車路線)
         const plan = findMultiModalRoute(
           [player.lat, player.lng],
           player.currentStationName || '目前位置',
@@ -383,7 +349,6 @@ export function useGameEngine() {
 
         waypoints = plan.allWaypoints;
         routeSummary = plan.summary;
-        // 若有捷運段優先標為捷運，否則依路線判斷
         const firstTransitSeg = plan.segments.find((s) => s.mode !== 'WALK');
         if (firstTransitSeg) {
           primaryMode = firstTransitSeg.mode;
@@ -397,8 +362,9 @@ export function useGameEngine() {
       if (waypoints.length < 2) return;
 
       sound.playTransit(primaryMode);
-
-      setUsedModesInCurrentMission((prev) => (prev.includes(primaryMode) ? prev : [...prev, primaryMode]));
+      setUsedModesInCurrentMission((prev) =>
+        prev.includes(primaryMode) ? prev : [...prev, primaryMode]
+      );
 
       const carbon = distKm * 0.17;
       setStats((s) => ({
@@ -408,7 +374,6 @@ export function useGameEngine() {
       }));
 
       const isTransit = primaryMode !== 'WALK';
-
       setPlayer((p) => ({
         ...p,
         isMoving: true,
@@ -422,7 +387,6 @@ export function useGameEngine() {
         currentPathIndex: 0
       }));
 
-      // Frame interval: 依真實速度調整 (捷運/高鐵沿軌道極速行進，步行平穩)
       const speedKmH = transitNetwork?.speeds[primaryMode] || (primaryMode === 'WALK' ? 4.5 : 45);
       const stepInterval = Math.max(12, Math.min(38, Math.round(750 / speedKmH)));
 
@@ -459,7 +423,7 @@ export function useGameEngine() {
     [player, transitNetwork]
   );
 
-  // 8. Toggle Board / Alight Transit (上下運具切換，按 'Z' 鍵)
+  // ─── 8. Toggle Board / Alight Transit ────────────────────────────────────
   const toggleBoardTransit = useCallback(
     (forcedMode?: TransitMode, forcedName?: string) => {
       if (player.isMoving) return;
@@ -478,10 +442,15 @@ export function useGameEngine() {
 
         if (!forcedMode && transitNetwork) {
           const nearestYoubike = [...transitNetwork.youbike].sort(
-            (a, b) => calculateDistanceKm(player.lat, player.lng, a.lat, a.lng) - calculateDistanceKm(player.lat, player.lng, b.lat, b.lng)
+            (a, b) =>
+              calculateDistanceKm(player.lat, player.lng, a.lat, a.lng) -
+              calculateDistanceKm(player.lat, player.lng, b.lat, b.lng)
           )[0];
 
-          if (nearestYoubike && calculateDistanceKm(player.lat, player.lng, nearestYoubike.lat, nearestYoubike.lng) < 1.5) {
+          if (
+            nearestYoubike &&
+            calculateDistanceKm(player.lat, player.lng, nearestYoubike.lat, nearestYoubike.lng) < 1.5
+          ) {
             modeToBoard = 'BIKE';
             vehicleName = nearestYoubike.name;
           } else {
@@ -502,7 +471,7 @@ export function useGameEngine() {
     [player, transitNetwork]
   );
 
-  // 9. Action: Directional Step (WASD / Arrow Keys / D-Pad)
+  // ─── 9. Action: Directional Step (WASD / Arrow Keys / D-Pad) ─────────────
   const moveByDirection = useCallback(
     (dir: 'UP' | 'DOWN' | 'LEFT' | 'RIGHT') => {
       if (player.isMoving) return;
@@ -532,13 +501,14 @@ export function useGameEngine() {
     [player, executePathRoute]
   );
 
-  // 10. Action: Pickup Bear
+  // ─── 10. Action: Pickup Bear ─────────────────────────────────────────────
   const pickupBear = useCallback(
     (bear: Bear) => {
       if (player.carryingBear || player.isMoving) return;
       const dist = calculateDistanceKm(player.lat, player.lng, bear.lat, bear.lng);
       if (dist > 0.8) {
-        alert(`距離「${bear.name}」太遠（約 ${Math.round(dist * 1000)} 公尺）！請先搭車至鄰近站點。`);
+        // Fix #10: 使用 toast 取代阻塞式 alert()
+        showToast(`距離「${bear.name}」太遠（約 ${Math.round(dist * 1000)} 公尺）！請先搭車至鄰近站點。`, 'warning');
         return;
       }
 
@@ -548,17 +518,18 @@ export function useGameEngine() {
       setMissionStartTime(Date.now());
       setUsedModesInCurrentMission([]);
     },
-    [player]
+    [player, showToast]
   );
 
-  // 11. Action: Deliver Bear to Hospital ER
+  // ─── 11. Action: Deliver Bear to Hospital ER ─────────────────────────────
   const deliverBearToHospital = useCallback(
     (hospital: Hospital) => {
       if (!player.carryingBear || player.isMoving) return;
 
       const dist = calculateDistanceKm(player.lat, player.lng, hospital.lat, hospital.lng);
       if (dist > 0.8) {
-        alert(`距離「${hospital.shortName}」還有 ${Math.round(dist * 1000)} 公尺！請先搭車至醫院門口。`);
+        // Fix #10: 使用 toast 取代阻塞式 alert()
+        showToast(`距離「${hospital.shortName}」還有 ${Math.round(dist * 1000)} 公尺！請先搭車至醫院門口。`, 'warning');
         return;
       }
 
@@ -593,8 +564,9 @@ export function useGameEngine() {
         hospitalName: hospital.name,
         timeSpentSec: timeSpent,
         healthRemaining: Math.round(bear.currentHealth),
-        transitModesUsed: usedModesInCurrentMission.length > 0 ? usedModesInCurrentMission : ['WALK'],
-        carbonSavedKg: Number(((timeSpent * 0.05) + 0.3).toFixed(2)),
+        transitModesUsed:
+          usedModesInCurrentMission.length > 0 ? usedModesInCurrentMission : ['WALK'],
+        carbonSavedKg: Number((timeSpent * 0.05 + 0.3).toFixed(2)),
         rating: stars,
         timestamp: new Date().toLocaleTimeString()
       };
@@ -610,10 +582,10 @@ export function useGameEngine() {
       setPlayer((p) => ({ ...p, carryingBear: null }));
       setGameState('SETTLEMENT');
     },
-    [player, missionStartTime, usedModesInCurrentMission]
+    [player, missionStartTime, usedModesInCurrentMission, showToast]
   );
 
-  // 12. Quick Action for Spacebar / Enter
+  // ─── 12. Quick Action for Spacebar / Enter ────────────────────────────────
   const handleQuickAction = useCallback(() => {
     if (player.carryingBear) {
       const nearHosp = hospitals.find(
@@ -632,7 +604,7 @@ export function useGameEngine() {
     }
   }, [player, hospitals, activeBears, deliverBearToHospital, pickupBear]);
 
-  // 13. Global Keyboard Controller
+  // ─── 13. Global Keyboard Controller ──────────────────────────────────────
   useEffect(() => {
     if (gameState !== 'PLAYING') return;
 
@@ -688,6 +660,7 @@ export function useGameEngine() {
   }, [gameState, moveByDirection, handleQuickAction, toggleBoardTransit]);
 
   return {
+    // 遊戲狀態
     gameState,
     setGameState,
     hospitals,
@@ -701,6 +674,10 @@ export function useGameEngine() {
     lastUpdatedTime,
     selectedHospital,
     setSelectedHospital,
+    // Toast 通知系統
+    toasts,
+    dismissToast,
+    // 遊戲操作
     startGame,
     spawnBear,
     spawnBatchBears,

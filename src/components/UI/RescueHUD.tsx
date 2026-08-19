@@ -37,7 +37,9 @@ export const RescueHUD: React.FC<RescueHUDProps> = ({
         (b) => calculateDistanceKm(player.lat, player.lng, b.lat, b.lng) <= 0.8
       ) || null
     );
-  }, [player, activeBears]);
+  // Fix #6: 只依賴 lat/lng 和 carryingBear，不依賴整個 player 物件（每幀都在變化）
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [player.lat, player.lng, player.carryingBear, activeBears]);
 
   // Nearest bear for fast route navigation
   const closestBear = useMemo(() => {
@@ -47,7 +49,8 @@ export const RescueHUD: React.FC<RescueHUDProps> = ({
         calculateDistanceKm(player.lat, player.lng, a.lat, a.lng) -
         calculateDistanceKm(player.lat, player.lng, b.lat, b.lng)
     )[0];
-  }, [player, activeBears]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [player.lat, player.lng, activeBears]);
 
   // Nearest optimal hospital (< 5 beds wait & not full)
   const bestHospital = useMemo(() => {
@@ -58,7 +61,8 @@ export const RescueHUD: React.FC<RescueHUDProps> = ({
         calculateDistanceKm(player.lat, player.lng, a.lat, a.lng) -
         calculateDistanceKm(player.lat, player.lng, b.lat, b.lng)
     )[0] || null;
-  }, [player, hospitals]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [player.lat, player.lng, hospitals]);
 
   // Check if player carrying bear is near any hospital (< 0.8 km)
   const nearbyHospital = useMemo(() => {
@@ -68,7 +72,8 @@ export const RescueHUD: React.FC<RescueHUDProps> = ({
         (h) => calculateDistanceKm(player.lat, player.lng, h.lat, h.lng) <= 0.8
       ) || null
     );
-  }, [player, hospitals]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [player.lat, player.lng, player.carryingBear, hospitals]);
 
   // Find nearby transit options around player
   const transitOptions = useMemo(() => {
@@ -156,7 +161,8 @@ export const RescueHUD: React.FC<RescueHUDProps> = ({
     });
 
     return options.sort((a, b) => a.distKm - b.distKm);
-  }, [player, transitNetwork]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [player.lat, player.lng, transitNetwork]);
 
   // Scroll Helpers
   const scrollLeft = () => {

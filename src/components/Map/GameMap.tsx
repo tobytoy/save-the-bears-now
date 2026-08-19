@@ -16,11 +16,12 @@ interface GameMapProps {
 }
 
 // Map Auto-Follow Controller
-const MapFollowController: React.FC<{ playerPos: [number, number] }> = ({ playerPos }) => {
+const MapFollowController: React.FC<{ playerLat: number; playerLng: number }> = ({ playerLat, playerLng }) => {
   const map = useMap();
   useEffect(() => {
-    map.panTo(playerPos, { animate: true, duration: 0.3 });
-  }, [map, playerPos]);
+    // Fix #7: 依賴兩個原始値而非每次新建的 tuple，避免不必要的重複 pan
+    map.panTo([playerLat, playerLng], { animate: true, duration: 0.3 });
+  }, [map, playerLat, playerLng]);
   return null;
 };
 
@@ -120,7 +121,10 @@ function getPlayerIcon(mode: TransitMode, isOnTransit: boolean, isCarryingBear: 
 // 2. 🐻 Injured Bear Marker: 顯眼受傷小熊
 function getBearIcon(bear: Bear): L.DivIcon {
   const hpBracket = Math.round(bear.currentHealth / 5) * 5; // 5% 為一個快取級距
-  const cacheKey = `${bear.id}_${hpBracket}_${bear.name}_${bear.avatar}`;
+  // Fix #8: 改用 type + hpBracket 為 key（而非 bear.id）
+  //   全部小熊共 5 種類型 × 20 個 HP 快取級距 = 最多 100 格 entry
+  //   決不會因熊死亡而無限増長
+  const cacheKey = `${bear.type}_${hpBracket}_${bear.avatar}`;
   const existing = bearIconCache.get(cacheKey);
   if (existing) return existing;
 
@@ -158,6 +162,13 @@ function getBearIcon(bear: Bear): L.DivIcon {
     iconSize: [48, 48],
     iconAnchor: [24, 24]
   });
+
+  // 安全上限：超過 120 條則 FIFO 清除最舊的 entry
+  if (bearIconCache.size >= 120) {
+    const oldestKey = bearIconCache.keys().next().value;
+    if (oldestKey) bearIconCache.delete(oldestKey);
+  }
+
   bearIconCache.set(cacheKey, icon);
   return icon;
 }
@@ -254,7 +265,7 @@ export const GameMap: React.FC<GameMapProps> = ({
         />
 
         {/* Auto Follow Controller */}
-        <MapFollowController playerPos={[player.lat, player.lng]} />
+        <MapFollowController playerLat={player.lat} playerLng={player.lng} />
 
         {/* Transit Routes: Metro Lines */}
         {transitNetwork?.metro.map((line) => {

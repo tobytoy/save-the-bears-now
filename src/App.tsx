@@ -10,7 +10,9 @@ import { BearDexModal } from './components/UI/BearDexModal';
 import { GameIntroModal } from './components/UI/GameIntroModal';
 import { EmergencyTutorialModal } from './components/UI/EmergencyTutorialModal';
 import { DirectionPad } from './components/UI/DirectionPad';
+import { ToastNotification } from './components/UI/ToastNotification';
 import { Hospital, TransitMode } from './types';
+import { sound } from './utils/audio';
 
 export function App() {
   const {
@@ -25,6 +27,8 @@ export function App() {
     rescueHistory,
     lastUpdatedTime,
     setSelectedHospital,
+    toasts,
+    dismissToast,
     startGame,
     spawnBatchBears,
     moveToLocation,
@@ -35,11 +39,18 @@ export function App() {
     deliverBearToHospital
   } = useGameEngine();
 
-  const [currentLayer, setCurrentLayer] = useState<MapTileLayer>(MAP_LAYERS[0]); // Carto Dark by default
+  const [currentLayer, setCurrentLayer] = useState<MapTileLayer>(MAP_LAYERS[0]);
   const [showHospitalList, setShowHospitalList] = useState(false);
   const [showDex, setShowDex] = useState(false);
   const [showTutorial, setShowTutorial] = useState(false);
+  // Fix #1: isSoundEnabled 現在作為 sound.enabled 的鏡像，確保兩者同步
   const [isSoundEnabled, setIsSoundEnabled] = useState(true);
+
+  const handleToggleSound = () => {
+    const next = !sound.enabled;
+    sound.enabled = next; // 同步更新底層 SoundManager
+    setIsSoundEnabled(next);
+  };
 
   // Navigate to Hospital
   const handleNavigateToHospital = (hospital: Hospital) => {
@@ -49,6 +60,9 @@ export function App() {
 
   return (
     <main className="w-screen h-screen relative overflow-hidden bg-slate-950">
+      {/* In-Game Toast Notifications（取代阻塞式 alert）*/}
+      <ToastNotification toasts={toasts} onDismiss={dismissToast} />
+
       {/* Top HUD Header */}
       <Header
         stats={stats}
@@ -61,7 +75,7 @@ export function App() {
         activeBearCount={activeBears.length}
         lastUpdated={lastUpdatedTime}
         isSoundEnabled={isSoundEnabled}
-        onToggleSound={() => setIsSoundEnabled(!isSoundEnabled)}
+        onToggleSound={handleToggleSound}
       />
 
       {/* Main Interactive Map */}
